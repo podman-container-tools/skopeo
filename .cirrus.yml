@@ -67,7 +67,7 @@ doccheck_task:
       # TODO: Can't use 'runner.sh setup' inside container.  However,
       # removing the pre-installed package is the only necessary step
       # at the time of this comment.
-      dnf erase -y skopeo  # Guarantee non-interference
+      dnf remove -y skopeo  # Guarantee non-interference
       "${SKOPEO_PATH}/${SCRIPT_BASE}/runner.sh" build
       "${SKOPEO_PATH}/${SCRIPT_BASE}/runner.sh" doccheck
 

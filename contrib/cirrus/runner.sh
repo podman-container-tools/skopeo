@@ -53,7 +53,7 @@ _run_setup() {
     fi
 
     # VM's come with the distro. skopeo package pre-installed
-    dnf erase -y skopeo
+    dnf remove -y skopeo
 
     msg "Removing systemd-resolved from nsswitch.conf"
     # /etc/resolv.conf is already set to bypass systemd-resolvd
