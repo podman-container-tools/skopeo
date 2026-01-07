@@ -1,9 +1,5 @@
 # TODO list
 
-## Release v0.5.x
-
-1. Support check flag in gxz command.
-
 ## Release v0.6
 
 1. Review encoder and check for lzma improvements under xz.
@@ -85,6 +81,33 @@
 * `git push`
 
 ## Log
+
+## 2025-08-28
+
+Release v0.5.14 addresses the security vulnerability CVE-2025-58058. If you put
+bytes in from of a LZMA stream, the header might not be read correctly and
+memory for the dictionary buffer allocated. I have implemented mitigations for
+the problem.
+
+### 2025-08-20
+
+Release v0.5.13 addressed issue #61 regarding handling of multiple WriteClosers
+together. So I added a new package xio with a WriteCloserStack to address the
+issue.
+
+### 2024-04-03
+
+Release v0.5.12 updates README.md and SECURITY.md to address the supply chain
+attack on the original xz implementation.
+
+### 2022-12-12
+
+Matt Dantay (@bodgit) reported an issue with the LZMA reader. The implementation
+returned an error if the dictionary size was less than 4096 byte, but the
+recommendation stated the actual used window size should be set to 4096 byte in
+that case. It actually was the pull request
+[#52](https://github.com/ulikunitz/xz/pull/52). The new patch v0.5.11 will fix
+it.
 
 ### 2021-02-02
 
