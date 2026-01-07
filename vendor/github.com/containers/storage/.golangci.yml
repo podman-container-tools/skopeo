@@ -1,37 +1,20 @@
----
-run:
-  concurrency: 6
-  deadline: 5m
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+
 linters:
-  enable-all: true
-  disable:
-    - dogsled
-    - dupl
-    - errcheck
-    - funlen
-    - gochecknoglobals
-    - gochecknoinits
-    - gocognit
-    - gocritic
-    - gocyclo
-    - godox
-    - gomnd
-    - gosec
-    - gosimple
-    - govet
-    - ineffassign
-    - lll
-    - maligned
-    - misspell
-    - nakedret
-    - prealloc
-    - scopelint
-    - staticcheck
-    - structcheck
-    - stylecheck
+  enable:
+    - nolintlint
     - unconvert
-    - unparam
-    - unused
-    - varcheck
-    - whitespace
-    - wsl
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1003 # https://staticcheck.dev/docs/checks/#ST1003 Poorly chosen identifier.
+        - -QF1008 # https://staticcheck.dev/docs/checks/#QF1008 Omit embedded fields from selector expression.

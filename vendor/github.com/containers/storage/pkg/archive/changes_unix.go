@@ -1,4 +1,4 @@
-// +build !windows
+//go:build !windows
 
 package archive
 
@@ -29,9 +29,10 @@ func statDifferent(oldStat *system.StatT, oldInfo *FileInfo, newStat *system.Sta
 	if oldStat.Mode() != newStat.Mode() ||
 		ownerChanged ||
 		oldStat.Rdev() != newStat.Rdev() ||
+		oldStat.Flags() != newStat.Flags() ||
+		!sameFsTimeSpec(oldStat.Mtim(), newStat.Mtim()) ||
 		// Don't look at size for dirs, its not a good measure of change
-		(oldStat.Mode()&unix.S_IFDIR != unix.S_IFDIR &&
-			(!sameFsTimeSpec(oldStat.Mtim(), newStat.Mtim()) || (oldStat.Size() != newStat.Size()))) {
+		((oldStat.Mode()&unix.S_IFDIR != unix.S_IFDIR) && (oldStat.Size() != newStat.Size())) {
 		return true
 	}
 	return false

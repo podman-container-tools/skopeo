@@ -5,11 +5,11 @@ package zstd
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"log"
 	"math"
-	"math/bits"
+
+	"github.com/klauspost/compress/internal/le"
 )
 
 // enable debug printing
@@ -35,9 +35,6 @@ const forcePreDef = false
 
 // zstdMinMatch is the minimum zstd match length.
 const zstdMinMatch = 3
-
-// Reset the buffer offset when reaching this.
-const bufferReset = math.MaxInt32 - MaxWindowSize
 
 // fcsUnknown is used for unknown frame content size.
 const fcsUnknown = math.MaxUint64
@@ -75,7 +72,6 @@ var (
 	ErrDecoderSizeExceeded = errors.New("decompressed size exceeds configured limit")
 
 	// ErrUnknownDictionary is returned if the dictionary ID is unknown.
-	// For the time being dictionaries are not supported.
 	ErrUnknownDictionary = errors.New("unknown dictionary")
 
 	// ErrFrameSizeExceeded is returned if the stated frame size is exceeded.
@@ -92,6 +88,10 @@ var (
 	// ErrDecoderClosed will be returned if the Decoder was used after
 	// Close has been called.
 	ErrDecoderClosed = errors.New("decoder used after Close")
+
+	// ErrEncoderClosed will be returned if the Encoder was used after
+	// Close has been called.
+	ErrEncoderClosed = errors.New("encoder used after Close")
 
 	// ErrDecoderNilInput is returned when a nil Reader was provided
 	// and an operation other than Reset/DecodeAll/Close was attempted.
@@ -110,38 +110,12 @@ func printf(format string, a ...interface{}) {
 	}
 }
 
-// matchLen returns the maximum length.
-// a must be the shortest of the two.
-// The function also returns whether all bytes matched.
-func matchLen(a, b []byte) int {
-	b = b[:len(a)]
-	for i := 0; i < len(a)-7; i += 8 {
-		if diff := load64(a, i) ^ load64(b, i); diff != 0 {
-			return i + (bits.TrailingZeros64(diff) >> 3)
-		}
-	}
-
-	checked := (len(a) >> 3) << 3
-	a = a[checked:]
-	b = b[checked:]
-	for i := range a {
-		if a[i] != b[i] {
-			return i + checked
-		}
-	}
-	return len(a) + checked
-}
-
 func load3232(b []byte, i int32) uint32 {
-	return binary.LittleEndian.Uint32(b[i:])
+	return le.Load32(b, i)
 }
 
 func load6432(b []byte, i int32) uint64 {
-	return binary.LittleEndian.Uint64(b[i:])
-}
-
-func load64(b []byte, i int) uint64 {
-	return binary.LittleEndian.Uint64(b[i:])
+	return le.Load64(b, i)
 }
 
 type byter interface {

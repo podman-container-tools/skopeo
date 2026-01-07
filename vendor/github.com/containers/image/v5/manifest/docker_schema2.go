@@ -5,20 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/containers/image/v5/internal/manifest"
 	compressiontypes "github.com/containers/image/v5/pkg/compression/types"
 	"github.com/containers/image/v5/pkg/strslice"
 	"github.com/containers/image/v5/types"
 	"github.com/opencontainers/go-digest"
-	"github.com/pkg/errors"
 )
 
 // Schema2Descriptor is a “descriptor” in docker/distribution schema 2.
-type Schema2Descriptor struct {
-	MediaType string        `json:"mediaType"`
-	Size      int64         `json:"size"`
-	Digest    digest.Digest `json:"digest"`
-	URLs      []string      `json:"urls,omitempty"`
-}
+type Schema2Descriptor = manifest.Schema2Descriptor
 
 // BlobInfoFromSchema2Descriptor returns a types.BlobInfo based on the input schema 2 descriptor.
 func BlobInfoFromSchema2Descriptor(desc Schema2Descriptor) types.BlobInfo {
@@ -59,9 +54,10 @@ type Schema2HealthConfig struct {
 	Test []string `json:",omitempty"`
 
 	// Zero means to inherit. Durations are expressed as integer nanoseconds.
-	StartPeriod time.Duration `json:",omitempty"` // StartPeriod is the time to wait after starting before running the first check.
-	Interval    time.Duration `json:",omitempty"` // Interval is the time to wait between checks.
-	Timeout     time.Duration `json:",omitempty"` // Timeout is the time to wait before considering the check to have hung.
+	StartPeriod   time.Duration `json:",omitempty"` // StartPeriod is the time to wait after starting before running the first check.
+	StartInterval time.Duration `json:",omitempty"` // StartInterval is the time to wait between checks during the start period.
+	Interval      time.Duration `json:",omitempty"` // Interval is the time to wait between checks.
+	Timeout       time.Duration `json:",omitempty"` // Timeout is the time to wait before considering the check to have hung.
 
 	// Retries is the number of consecutive failures needed to consider a container as unhealthy.
 	// Zero means inherit.
@@ -160,13 +156,13 @@ type Schema2Image struct {
 }
 
 // Schema2FromManifest creates a Schema2 manifest instance from a manifest blob.
-func Schema2FromManifest(manifest []byte) (*Schema2, error) {
+func Schema2FromManifest(manifestBlob []byte) (*Schema2, error) {
 	s2 := Schema2{}
-	if err := json.Unmarshal(manifest, &s2); err != nil {
+	if err := json.Unmarshal(manifestBlob, &s2); err != nil {
 		return nil, err
 	}
-	if err := validateUnambiguousManifestFormat(manifest, DockerV2Schema2MediaType,
-		allowedFieldConfig|allowedFieldLayers); err != nil {
+	if err := manifest.ValidateUnambiguousManifestFormat(manifestBlob, DockerV2Schema2MediaType,
+		manifest.AllowedFieldConfig|manifest.AllowedFieldLayers); err != nil {
 		return nil, err
 	}
 	// Check manifest's and layers' media types.
@@ -206,7 +202,7 @@ func (m *Schema2) ConfigInfo() types.BlobInfo {
 // The Digest field is guaranteed to be provided; Size may be -1.
 // WARNING: The list may contain duplicates, and they are semantically relevant.
 func (m *Schema2) LayerInfos() []LayerInfo {
-	blobs := []LayerInfo{}
+	blobs := make([]LayerInfo, 0, len(m.LayersDescriptors))
 	for _, layer := range m.LayersDescriptors {
 		blobs = append(blobs, LayerInfo{
 			BlobInfo:   BlobInfoFromSchema2Descriptor(layer),
@@ -234,7 +230,7 @@ var schema2CompressionMIMETypeSets = []compressionMIMETypeSet{
 // CompressionAlgorithm that would result in anything other than gzip compression.
 func (m *Schema2) UpdateLayerInfos(layerInfos []types.BlobInfo) error {
 	if len(m.LayersDescriptors) != len(layerInfos) {
-		return errors.Errorf("Error preparing updated manifest: layer count changed from %d to %d", len(m.LayersDescriptors), len(layerInfos))
+		return fmt.Errorf("Error preparing updated manifest: layer count changed from %d to %d", len(m.LayersDescriptors), len(layerInfos))
 	}
 	original := m.LayersDescriptors
 	m.LayersDescriptors = make([]Schema2Descriptor, len(layerInfos))
@@ -246,12 +242,15 @@ func (m *Schema2) UpdateLayerInfos(layerInfos []types.BlobInfo) error {
 		}
 		mimeType, err := updatedMIMEType(schema2CompressionMIMETypeSets, mimeType, info)
 		if err != nil {
-			return errors.Wrapf(err, "preparing updated manifest, layer %q", info.Digest)
+			return fmt.Errorf("preparing updated manifest, layer %q: %w", info.Digest, err)
 		}
 		m.LayersDescriptors[i].MediaType = mimeType
 		m.LayersDescriptors[i].Digest = info.Digest
 		m.LayersDescriptors[i].Size = info.Size
 		m.LayersDescriptors[i].URLs = info.URLs
+		if info.CryptoOperation != types.PreserveOriginalCrypto {
+			return fmt.Errorf("encryption change (for layer %q) is not supported in schema2 manifests", info.Digest)
+		}
 	}
 	return nil
 }
@@ -272,6 +271,7 @@ func (m *Schema2) Inspect(configGetter func(types.BlobInfo) ([]byte, error)) (*t
 	if err := json.Unmarshal(config, s2); err != nil {
 		return nil, err
 	}
+	layerInfos := m.LayerInfos()
 	i := &types.ImageInspectInfo{
 		Tag:           "",
 		Created:       &s2.Created,
@@ -279,7 +279,9 @@ func (m *Schema2) Inspect(configGetter func(types.BlobInfo) ([]byte, error)) (*t
 		Architecture:  s2.Architecture,
 		Variant:       s2.Variant,
 		Os:            s2.OS,
-		Layers:        layerInfosToStrings(m.LayerInfos()),
+		Layers:        layerInfosToStrings(layerInfos),
+		LayersData:    imgInspectLayersFromLayerInfos(layerInfos),
+		Author:        s2.Author,
 	}
 	if s2.Config != nil {
 		i.Labels = s2.Config.Labels
@@ -293,5 +295,13 @@ func (m *Schema2) ImageID([]digest.Digest) (string, error) {
 	if err := m.ConfigDescriptor.Digest.Validate(); err != nil {
 		return "", err
 	}
-	return m.ConfigDescriptor.Digest.Hex(), nil
+	return m.ConfigDescriptor.Digest.Encoded(), nil
+}
+
+// CanChangeLayerCompression returns true if we can compress/decompress layers with mimeType in the current image
+// (and the code can handle that).
+// NOTE: Even if this returns true, the relevant format might not accept all compression algorithms; the set of accepted
+// algorithms depends not on the current format, but possibly on the target of a conversion.
+func (m *Schema2) CanChangeLayerCompression(mimeType string) bool {
+	return compressionVariantsRecognizeMIMEType(schema2CompressionMIMETypeSets, mimeType)
 }

@@ -5,10 +5,11 @@
 package flate
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
+
+	"github.com/klauspost/compress/internal/le"
 )
 
 const (
@@ -34,11 +35,6 @@ const (
 	// Should preferably be a multiple of 6, since
 	// we accumulate 6 bytes between writes to the buffer.
 	bufferFlushSize = 246
-
-	// bufferSize is the actual output byte buffer size.
-	// It must have additional headroom for a flush
-	// which can contain up to 8 bytes.
-	bufferSize = bufferFlushSize + 8
 )
 
 // Minimum length code that emits bits.
@@ -265,9 +261,9 @@ func (w *huffmanBitWriter) writeBytes(bytes []byte) {
 // Codes 0-15 are single byte codes. Codes 16-18 are followed by additional
 // information. Code badCode is an end marker
 //
-//  numLiterals      The number of literals in literalEncoding
-//  numOffsets       The number of offsets in offsetEncoding
-//  litenc, offenc   The literal and offset encoder to use
+//	numLiterals      The number of literals in literalEncoding
+//	numOffsets       The number of offsets in offsetEncoding
+//	litenc, offenc   The literal and offset encoder to use
 func (w *huffmanBitWriter) generateCodegen(numLiterals int, numOffsets int, litEnc, offEnc *huffmanEncoder) {
 	for i := range w.codegenFreq {
 		w.codegenFreq[i] = 0
@@ -443,7 +439,7 @@ func (w *huffmanBitWriter) writeOutBits() {
 	n := w.nbytes
 
 	// We over-write, but faster...
-	binary.LittleEndian.PutUint64(w.bytes[n:], bits)
+	le.Store64(w.bytes[n:], bits)
 	n += 6
 
 	if n >= bufferFlushSize {
@@ -460,9 +456,9 @@ func (w *huffmanBitWriter) writeOutBits() {
 
 // Write the header of a dynamic Huffman block to the output stream.
 //
-//  numLiterals  The number of literals specified in codegen
-//  numOffsets   The number of offsets specified in codegen
-//  numCodegens  The number of codegens used in codegen
+//	numLiterals  The number of literals specified in codegen
+//	numOffsets   The number of offsets specified in codegen
+//	numCodegens  The number of codegens used in codegen
 func (w *huffmanBitWriter) writeDynamicHeader(numLiterals int, numOffsets int, numCodegens int, isEof bool) {
 	if w.err != nil {
 		return
@@ -790,9 +786,11 @@ func (w *huffmanBitWriter) fillTokens() {
 // and offsetEncoding.
 // The number of literal and offset tokens is returned.
 func (w *huffmanBitWriter) indexTokens(t *tokens, filled bool) (numLiterals, numOffsets int) {
-	copy(w.literalFreq[:], t.litHist[:])
-	copy(w.literalFreq[256:], t.extraHist[:])
-	copy(w.offsetFreq[:], t.offHist[:offsetCodeCount])
+	//copy(w.literalFreq[:], t.litHist[:])
+	*(*[256]uint16)(w.literalFreq[:]) = t.litHist
+	//copy(w.literalFreq[256:], t.extraHist[:])
+	*(*[32]uint16)(w.literalFreq[256:]) = t.extraHist
+	w.offsetFreq = t.offHist
 
 	if t.n == 0 {
 		return
@@ -857,7 +855,7 @@ func (w *huffmanBitWriter) writeTokens(tokens []token, leCodes, oeCodes []hcode)
 			bits |= c.code64() << (nbits & 63)
 			nbits += c.len()
 			if nbits >= 48 {
-				binary.LittleEndian.PutUint64(w.bytes[nbytes:], bits)
+				le.Store64(w.bytes[nbytes:], bits)
 				//*(*uint64)(unsafe.Pointer(&w.bytes[nbytes])) = bits
 				bits >>= 48
 				nbits -= 48
@@ -885,7 +883,7 @@ func (w *huffmanBitWriter) writeTokens(tokens []token, leCodes, oeCodes []hcode)
 			bits |= c.code64() << (nbits & 63)
 			nbits += c.len()
 			if nbits >= 48 {
-				binary.LittleEndian.PutUint64(w.bytes[nbytes:], bits)
+				le.Store64(w.bytes[nbytes:], bits)
 				//*(*uint64)(unsafe.Pointer(&w.bytes[nbytes])) = bits
 				bits >>= 48
 				nbits -= 48
@@ -908,7 +906,7 @@ func (w *huffmanBitWriter) writeTokens(tokens []token, leCodes, oeCodes []hcode)
 			bits |= uint64(extraLength) << (nbits & 63)
 			nbits += extraLengthBits
 			if nbits >= 48 {
-				binary.LittleEndian.PutUint64(w.bytes[nbytes:], bits)
+				le.Store64(w.bytes[nbytes:], bits)
 				//*(*uint64)(unsafe.Pointer(&w.bytes[nbytes])) = bits
 				bits >>= 48
 				nbits -= 48
@@ -934,7 +932,7 @@ func (w *huffmanBitWriter) writeTokens(tokens []token, leCodes, oeCodes []hcode)
 			bits |= c.code64() << (nbits & 63)
 			nbits += c.len()
 			if nbits >= 48 {
-				binary.LittleEndian.PutUint64(w.bytes[nbytes:], bits)
+				le.Store64(w.bytes[nbytes:], bits)
 				//*(*uint64)(unsafe.Pointer(&w.bytes[nbytes])) = bits
 				bits >>= 48
 				nbits -= 48
@@ -956,7 +954,7 @@ func (w *huffmanBitWriter) writeTokens(tokens []token, leCodes, oeCodes []hcode)
 			bits |= uint64((offset-(offsetComb>>8))&matchOffsetOnlyMask) << (nbits & 63)
 			nbits += uint8(offsetComb)
 			if nbits >= 48 {
-				binary.LittleEndian.PutUint64(w.bytes[nbytes:], bits)
+				le.Store64(w.bytes[nbytes:], bits)
 				//*(*uint64)(unsafe.Pointer(&w.bytes[nbytes])) = bits
 				bits >>= 48
 				nbits -= 48
@@ -1110,7 +1108,7 @@ func (w *huffmanBitWriter) writeBlockHuff(eof bool, input []byte, sync bool) {
 		// We must have at least 48 bits free.
 		if nbits >= 8 {
 			n := nbits >> 3
-			binary.LittleEndian.PutUint64(w.bytes[nbytes:], bits)
+			le.Store64(w.bytes[nbytes:], bits)
 			bits >>= (n * 8) & 63
 			nbits -= n * 8
 			nbytes += n
@@ -1139,7 +1137,7 @@ func (w *huffmanBitWriter) writeBlockHuff(eof bool, input []byte, sync bool) {
 	// Remaining...
 	for _, t := range input {
 		if nbits >= 48 {
-			binary.LittleEndian.PutUint64(w.bytes[nbytes:], bits)
+			le.Store64(w.bytes[nbytes:], bits)
 			//*(*uint64)(unsafe.Pointer(&w.bytes[nbytes])) = bits
 			bits >>= 48
 			nbits -= 48

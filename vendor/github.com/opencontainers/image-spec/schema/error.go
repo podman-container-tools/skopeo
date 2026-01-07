@@ -17,11 +17,14 @@ package schema
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 )
 
 // A SyntaxError is a description of a JSON syntax error
 // including line, column and offset in the JSON file.
+//
+// Deprecated: SyntaxError is no longer returned from Validator.
 type SyntaxError struct {
 	msg       string
 	Line, Col int
@@ -33,8 +36,11 @@ func (e *SyntaxError) Error() string { return e.msg }
 // WrapSyntaxError checks whether the given error is a *json.SyntaxError
 // and converts it into a *schema.SyntaxError containing line/col information using the given reader.
 // If the given error is not a *json.SyntaxError it is returned unchanged.
+//
+// Deprecated: WrapSyntaxError is no longer returned by Validator.
 func WrapSyntaxError(r io.Reader, err error) error {
-	if serr, ok := err.(*json.SyntaxError); ok {
+	var serr *json.SyntaxError
+	if errors.As(err, &serr) {
 		buf := bufio.NewReader(r)
 		line := 0
 		col := 0

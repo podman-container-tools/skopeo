@@ -1,5 +1,4 @@
 //go:build !windows && !darwin
-// +build !windows,!darwin
 
 package chrootarchive
 
@@ -26,7 +25,6 @@ type applyLayerResponse struct {
 // used on Windows as it does not support chroot, hence no point sandboxing
 // through chroot and rexec.
 func applyLayer() {
-
 	var (
 		tmpDir  string
 		err     error
@@ -41,11 +39,13 @@ func applyLayer() {
 	}
 
 	// We need to be able to set any perms
-	oldmask, err := system.Umask(0)
-	defer system.Umask(oldmask)
+	oldMask, err := system.Umask(0)
 	if err != nil {
 		fatal(err)
 	}
+	defer func() {
+		_, _ = system.Umask(oldMask) // Ignore err. This can only fail with ErrNotSupportedPlatform, in which case we would have failed above.
+	}()
 
 	if err := json.Unmarshal([]byte(os.Getenv("OPT")), &options); err != nil {
 		fatal(err)
@@ -97,9 +97,6 @@ func applyLayerHandler(dest string, layer io.Reader, options *archive.TarOptions
 		if unshare.IsRootless() {
 			options.InUserNS = true
 		}
-	}
-	if options.ExcludePatterns == nil {
-		options.ExcludePatterns = []string{}
 	}
 
 	data, err := json.Marshal(options)

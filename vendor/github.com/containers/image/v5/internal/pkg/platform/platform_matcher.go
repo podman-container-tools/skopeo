@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/containers/image/v5/types"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/sirupsen/logrus"
 )
 
 // For Linux, the kernel has already detected the ABI, ISA and Features.
@@ -62,8 +64,8 @@ func getCPUInfo(pattern string) (info string, err error) {
 	return "", fmt.Errorf("getCPUInfo for pattern: %s not found", pattern)
 }
 
-func getCPUVariantWindows(arch string) string {
-	// Windows only supports v7 for ARM32 and v8 for ARM64 and so we can use
+func getCPUVariantDarwinWindows(arch string) string {
+	// Darwin and Windows only support v7 for ARM32 and v8 for ARM64 and so we can use
 	// runtime.GOARCH to determine the variants
 	var variant string
 	switch arch {
@@ -81,15 +83,40 @@ func getCPUVariantWindows(arch string) string {
 func getCPUVariantArm() string {
 	variant, err := getCPUInfo("Cpu architecture")
 	if err != nil {
+		logrus.Errorf("Couldn't get cpu architecture: %v", err)
 		return ""
 	}
-	// TODO handle RPi Zero mismatch (https://github.com/moby/moby/pull/36121#issuecomment-398328286)
 
 	switch strings.ToLower(variant) {
 	case "8", "aarch64":
 		variant = "v8"
-	case "7", "7m", "?(12)", "?(13)", "?(14)", "?(15)", "?(16)", "?(17)":
+	case "7m", "?(12)", "?(13)", "?(14)", "?(15)", "?(16)", "?(17)":
 		variant = "v7"
+	case "7":
+		// handle RPi Zero variant mismatch due to wrong variant from kernel
+		// https://github.com/containerd/containerd/pull/4530
+		// https://www.raspberrypi.org/forums/viewtopic.php?t=12614
+		// https://github.com/moby/moby/pull/36121#issuecomment-398328286
+		model, err := getCPUInfo("model name")
+		if err != nil {
+			logrus.Errorf("Couldn't get cpu model name, it may be the corner case where variant is 6: %v", err)
+			return ""
+		}
+		// model name is NOT a value provided by the CPU; it is another outcome of Linux CPU detection,
+		// https://github.com/torvalds/linux/blob/190bf7b14b0cf3df19c059061be032bd8994a597/arch/arm/mm/proc-v6.S#L178C35-L178C35
+		// (matching happens based on value + mask at https://github.com/torvalds/linux/blob/190bf7b14b0cf3df19c059061be032bd8994a597/arch/arm/mm/proc-v6.S#L273-L274 )
+		// ARM CPU ID starts with a “main” ID register https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/System-Control-Registers-in-a-VMSA-implementation/VMSA-System-control-registers-descriptions--in-register-order/MIDR--Main-ID-Register--VMSA?lang=en ,
+		// but the ARMv6/ARMv7 differences are not a single dimension, https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-CPUID-Identification-Scheme?lang=en .
+		// The Linux "cpu architecture" is determined by a “memory model” feature.
+		//
+		// So, the "armv6-compatible" check basically checks for a "v6 or v7 CPU, but not one found listed as a known v7 one in the .proc.info.init tables of
+		// https://github.com/torvalds/linux/blob/190bf7b14b0cf3df19c059061be032bd8994a597/arch/arm/mm/proc-v7.S .
+		if strings.HasPrefix(strings.ToLower(model), "armv6-compatible") {
+			logrus.Debugf("Detected corner case, setting cpu variant to v6")
+			variant = "v6"
+		} else {
+			variant = "v7"
+		}
 	case "6", "6tej":
 		variant = "v6"
 	case "5", "5t", "5te", "5tej":
@@ -106,8 +133,8 @@ func getCPUVariantArm() string {
 }
 
 func getCPUVariant(os string, arch string) string {
-	if os == "windows" {
-		return getCPUVariantWindows(arch)
+	if os == "darwin" || os == "windows" {
+		return getCPUVariantDarwinWindows(arch)
 	}
 	if arch == "arm" || arch == "arm64" {
 		return getCPUVariantArm()
@@ -126,7 +153,11 @@ var compatibility = map[string][]string{
 // WantedPlatforms returns all compatible platforms with the platform specifics possibly overridden by user,
 // the most compatible platform is first.
 // If some option (arch, os, variant) is not present, a value from current platform is detected.
-func WantedPlatforms(ctx *types.SystemContext) ([]imgspecv1.Platform, error) {
+func WantedPlatforms(ctx *types.SystemContext) []imgspecv1.Platform {
+	// Note that this does not use Platform.OSFeatures and Platform.OSVersion at all.
+	// The fields are not specified by the OCI specification, as of version 1.1, usefully enough
+	// to be interoperable, anyway.
+
 	wantedArch := runtime.GOARCH
 	wantedVariant := ""
 	if ctx != nil && ctx.ArchitectureChoice != "" {
@@ -152,13 +183,9 @@ func WantedPlatforms(ctx *types.SystemContext) ([]imgspecv1.Platform, error) {
 	if wantedVariant != "" {
 		// If the user requested a specific variant, we'll walk down
 		// the list from most to least compatible.
-		if compatibility[wantedArch] != nil {
-			variantOrder := compatibility[wantedArch]
-			for i, v := range variantOrder {
-				if wantedVariant == v {
-					variants = variantOrder[i:]
-					break
-				}
+		if variantOrder := compatibility[wantedArch]; variantOrder != nil {
+			if i := slices.Index(variantOrder, wantedVariant); i != -1 {
+				variants = variantOrder[i:]
 			}
 		}
 		if variants == nil {
@@ -184,7 +211,7 @@ func WantedPlatforms(ctx *types.SystemContext) ([]imgspecv1.Platform, error) {
 			Variant:      v,
 		})
 	}
-	return res, nil
+	return res
 }
 
 // MatchesPlatform returns true if a platform descriptor from a multi-arch image matches

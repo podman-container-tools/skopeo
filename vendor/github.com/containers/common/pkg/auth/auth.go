@@ -3,52 +3,84 @@ package auth
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	passwd "github.com/containers/common/pkg/password"
 	"github.com/containers/image/v5/docker"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/pkg/docker/config"
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/containers/image/v5/types"
-	"github.com/pkg/errors"
+	"github.com/containers/storage/pkg/fileutils"
+	"github.com/containers/storage/pkg/homedir"
 	"github.com/sirupsen/logrus"
-	terminal "golang.org/x/term"
 )
+
+// ErrNewCredentialsInvalid means that the new user-provided credentials are
+// not accepted by the registry.
+type ErrNewCredentialsInvalid struct {
+	underlyingError error
+	message         string
+}
+
+// Error returns the error message as a string.
+func (e ErrNewCredentialsInvalid) Error() string {
+	return e.message
+}
+
+// Unwrap returns the underlying error.
+func (e ErrNewCredentialsInvalid) Unwrap() error {
+	return e.underlyingError
+}
 
 // GetDefaultAuthFile returns env value REGISTRY_AUTH_FILE as default
 // --authfile path used in multiple --authfile flag definitions
 // Will fail over to DOCKER_CONFIG if REGISTRY_AUTH_FILE environment is not set
+//
+// WARNINGS:
+//   - In almost all invocations, expect this function to return ""; so it can not be used
+//     for directly accessing the file.
+//   - Use this only for commands that _read_ credentials, not write them.
+//     The path may refer to github.com/containers auth.json, or to Docker config.json,
+//     and the distinction is lost; writing auth.json data to config.json may not be consumable by Docker,
+//     or it may overwrite and discard unrelated Docker configuration set by the user.
 func GetDefaultAuthFile() string {
+	// Keep this in sync with the default logic in systemContextWithOptions!
+
 	if authfile := os.Getenv("REGISTRY_AUTH_FILE"); authfile != "" {
 		return authfile
 	}
-	if auth_env := os.Getenv("DOCKER_CONFIG"); auth_env != "" {
-		return filepath.Join(auth_env, "config.json")
+	// This pre-existing behavior is not conceptually consistent:
+	// If users have a ~/.docker/config.json in the default path, and no environment variable
+	// set, we read auth.json first, falling back to config.json;
+	// but if DOCKER_CONFIG is set, we read only config.json in that path, and we don’t read auth.json at all.
+	if authEnv := os.Getenv("DOCKER_CONFIG"); authEnv != "" {
+		return filepath.Join(authEnv, "config.json")
 	}
 	return ""
 }
 
-// CheckAuthFile validates filepath given by --authfile
-// used by command has --authfile flag
-func CheckAuthFile(authfile string) error {
-	if authfile == "" {
+// CheckAuthFile validates a path option, failing if the option is set but the referenced file is not accessible.
+func CheckAuthFile(pathOption string) error {
+	if pathOption == "" {
 		return nil
 	}
-	if _, err := os.Stat(authfile); err != nil {
-		return errors.Wrap(err, "checking authfile")
+	if err := fileutils.Exists(pathOption); err != nil {
+		return fmt.Errorf("credential file is not accessible: %w", err)
 	}
 	return nil
 }
 
 // systemContextWithOptions returns a version of sys
-// updated with authFile and certDir values (if they are not "").
+// updated with authFile, dockerCompatAuthFile and certDir values (if they are not "").
 // NOTE: this is a shallow copy that can be used and updated, but may share
 // data with the original parameter.
-func systemContextWithOptions(sys *types.SystemContext, authFile, certDir string) *types.SystemContext {
+func systemContextWithOptions(sys *types.SystemContext, authFile, dockerCompatAuthFile, certDir string) (*types.SystemContext, error) {
 	if sys != nil {
 		sysCopy := *sys
 		sys = &sysCopy
@@ -56,28 +88,54 @@ func systemContextWithOptions(sys *types.SystemContext, authFile, certDir string
 		sys = &types.SystemContext{}
 	}
 
-	if authFile != "" {
+	defaultDockerConfigPath := filepath.Join(homedir.Get(), ".docker", "config.json")
+	switch {
+	case authFile != "" && dockerCompatAuthFile != "":
+		return nil, errors.New("options for paths to the credential file and to the Docker-compatible credential file can not be set simultaneously")
+	case authFile != "":
+		if authFile == defaultDockerConfigPath {
+			logrus.Warn("saving credentials to ~/.docker/config.json, but not using Docker-compatible file format")
+		}
 		sys.AuthFilePath = authFile
+	case dockerCompatAuthFile != "":
+		sys.DockerCompatAuthFilePath = dockerCompatAuthFile
+	default:
+		// Keep this in sync with GetDefaultAuthFile()!
+		//
+		// Note that c/image does not natively implement the REGISTRY_AUTH_FILE
+		// variable, so not all callers look for credentials in this location.
+		if authFileVar := os.Getenv("REGISTRY_AUTH_FILE"); authFileVar != "" {
+			if authFileVar == defaultDockerConfigPath {
+				logrus.Warn("$REGISTRY_AUTH_FILE points to ~/.docker/config.json, but the file format is not fully compatible; use the Docker-compatible file path option instead")
+			}
+			sys.AuthFilePath = authFileVar
+		} else if dockerConfig := os.Getenv("DOCKER_CONFIG"); dockerConfig != "" {
+			// This preserves pre-existing _inconsistent_ behavior:
+			// If the Docker configuration exists in the default ~/.docker/config.json location,
+			// we DO NOT write to it; instead, we update auth.json in the default path.
+			// Only if the user explicitly sets DOCKER_CONFIG, we write to that config.json.
+			sys.DockerCompatAuthFilePath = filepath.Join(dockerConfig, "config.json")
+		}
 	}
 	if certDir != "" {
 		sys.DockerCertPath = certDir
 	}
-	return sys
+	return sys, nil
 }
 
 // Login implements a “log in” command with the provided opts and args
 // reading the password from opts.Stdin or the options in opts.
 func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginOptions, args []string) error {
-	systemContext = systemContextWithOptions(systemContext, opts.AuthFile, opts.CertDir)
+	systemContext, err := systemContextWithOptions(systemContext, opts.AuthFile, opts.DockerCompatAuthFile, opts.CertDir)
+	if err != nil {
+		return err
+	}
 
-	var (
-		key, registry string
-		err           error
-	)
+	var key, registry string
 	switch len(args) {
 	case 0:
 		if !opts.AcceptUnspecifiedRegistry {
-			return errors.New("please provide a registry to login to")
+			return errors.New("please provide a registry to log in to")
 		}
 		if key, err = defaultRegistryWhenUnspecified(systemContext); err != nil {
 			return err
@@ -92,17 +150,17 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 		}
 
 	default:
-		return errors.New("login accepts only one registry to login to")
+		return errors.New("login accepts only one registry to log in to")
 	}
 
 	authConfig, err := config.GetCredentials(systemContext, key)
 	if err != nil {
-		return errors.Wrap(err, "get credentials")
+		return fmt.Errorf("get credentials: %w", err)
 	}
 
 	if opts.GetLoginSet {
 		if authConfig.Username == "" {
-			return errors.Errorf("not logged into %s", key)
+			return fmt.Errorf("not logged into %s", key)
 		}
 		fmt.Fprintf(opts.Stdout, "%s\n", authConfig.Username)
 		return nil
@@ -115,10 +173,10 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 	if opts.StdinPassword {
 		var stdinPasswordStrBuilder strings.Builder
 		if opts.Password != "" {
-			return errors.New("Can't specify both --password-stdin and --password")
+			return errors.New("can't specify both --password-stdin and --password")
 		}
 		if opts.Username == "" {
-			return errors.New("Must provide --username with --password-stdin")
+			return errors.New("must provide --username with --password-stdin")
 		}
 		scanner := bufio.NewScanner(opts.Stdin)
 		for scanner.Scan() {
@@ -139,28 +197,31 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 
 	username, password, err := getUserAndPass(opts, password, authConfig.Username)
 	if err != nil {
-		return errors.Wrap(err, "getting username and password")
+		return fmt.Errorf("getting username and password: %w", err)
 	}
 
 	if err = docker.CheckAuth(ctx, systemContext, username, password, registry); err == nil {
-		// Write the new credentials to the authfile
-		desc, err := config.SetCredentials(systemContext, key, username, password)
-		if err != nil {
-			return err
+		if !opts.NoWriteBack {
+			// Write the new credentials to the authfile
+			desc, err := config.SetCredentials(systemContext, key, username, password)
+			if err != nil {
+				return err
+			}
+			if opts.Verbose {
+				fmt.Fprintln(opts.Stdout, "Used: ", desc)
+			}
 		}
-		if opts.Verbose {
-			fmt.Fprintln(opts.Stdout, "Used: ", desc)
-		}
-	}
-	if err == nil {
 		fmt.Fprintln(opts.Stdout, "Login Succeeded!")
 		return nil
 	}
 	if unauthorized, ok := err.(docker.ErrUnauthorizedForCredentials); ok {
 		logrus.Debugf("error logging into %q: %v", key, unauthorized)
-		return errors.Errorf("error logging into %q: invalid username/password", key)
+		return ErrNewCredentialsInvalid{
+			underlyingError: err,
+			message:         fmt.Sprintf("logging into %q: invalid username/password", key),
+		}
 	}
-	return errors.Wrapf(err, "authenticating creds for %q", key)
+	return fmt.Errorf("authenticating creds for %q: %w", key, err)
 }
 
 // parseCredentialsKey turns the provided argument into a valid credential key
@@ -191,10 +252,10 @@ func parseCredentialsKey(arg string, acceptRepositories bool) (key, registry str
 	// Ideally c/image should provide dedicated validation functionality.
 	ref, err := reference.ParseNormalizedNamed(key)
 	if err != nil {
-		return "", "", errors.Wrapf(err, "parse reference from %q", key)
+		return "", "", fmt.Errorf("parse reference from %q: %w", key, err)
 	}
 	if !reference.IsNameOnly(ref) {
-		return "", "", errors.Errorf("reference %q contains tag or digest", ref.String())
+		return "", "", fmt.Errorf("reference %q contains tag or digest", ref.String())
 	}
 	refRegistry := reference.Domain(ref)
 	if refRegistry != registry { // This should never happen, check just to make sure
@@ -222,19 +283,24 @@ func replaceURLByHostPort(repository string) (string, error) {
 // using the -u and -p flags.  If the username prompt is left empty, the
 // displayed userFromAuthFile will be used instead.
 func getUserAndPass(opts *LoginOptions, password, userFromAuthFile string) (user, pass string, err error) {
-	reader := bufio.NewReader(opts.Stdin)
 	username := opts.Username
 	if username == "" {
+		if opts.Stdin == nil {
+			return "", "", errors.New("cannot prompt for username without stdin")
+		}
+
 		if userFromAuthFile != "" {
 			fmt.Fprintf(opts.Stdout, "Username (%s): ", userFromAuthFile)
 		} else {
 			fmt.Fprint(opts.Stdout, "Username: ")
 		}
+
+		reader := bufio.NewReader(opts.Stdin)
 		username, err = reader.ReadString('\n')
 		if err != nil {
-			return "", "", errors.Wrap(err, "reading username")
+			return "", "", fmt.Errorf("reading username: %w", err)
 		}
-		// If the user just hit enter, use the displayed user from the
+		// If the user just hit enter, use the displayed user from
 		// the authentication file.  This allows to do a lazy
 		// `$ buildah login -p $NEW_PASSWORD` without specifying the
 		// user.
@@ -244,9 +310,9 @@ func getUserAndPass(opts *LoginOptions, password, userFromAuthFile string) (user
 	}
 	if password == "" {
 		fmt.Fprint(opts.Stdout, "Password: ")
-		pass, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		pass, err := passwd.Read(int(os.Stdin.Fd()))
 		if err != nil {
-			return "", "", errors.Wrap(err, "reading password")
+			return "", "", fmt.Errorf("reading password: %w", err)
 		}
 		password = string(pass)
 		fmt.Fprintln(opts.Stdout)
@@ -259,7 +325,13 @@ func Logout(systemContext *types.SystemContext, opts *LogoutOptions, args []stri
 	if err := CheckAuthFile(opts.AuthFile); err != nil {
 		return err
 	}
-	systemContext = systemContextWithOptions(systemContext, opts.AuthFile, "")
+	if err := CheckAuthFile(opts.DockerCompatAuthFile); err != nil {
+		return err
+	}
+	systemContext, err := systemContextWithOptions(systemContext, opts.AuthFile, opts.DockerCompatAuthFile, "")
+	if err != nil {
+		return err
+	}
 
 	if opts.All {
 		if len(args) != 0 {
@@ -272,14 +344,11 @@ func Logout(systemContext *types.SystemContext, opts *LogoutOptions, args []stri
 		return nil
 	}
 
-	var (
-		key, registry string
-		err           error
-	)
+	var key, registry string
 	switch len(args) {
 	case 0:
 		if !opts.AcceptUnspecifiedRegistry {
-			return errors.New("please provide a registry to logout from")
+			return errors.New("please provide a registry to log out from")
 		}
 		if key, err = defaultRegistryWhenUnspecified(systemContext); err != nil {
 			return err
@@ -294,29 +363,30 @@ func Logout(systemContext *types.SystemContext, opts *LogoutOptions, args []stri
 		}
 
 	default:
-		return errors.New("logout accepts only one registry to logout from")
+		return errors.New("logout accepts only one registry to log out from")
 	}
 
 	err = config.RemoveAuthentication(systemContext, key)
-	switch errors.Cause(err) {
-	case nil:
+	if err == nil {
 		fmt.Fprintf(opts.Stdout, "Removed login credentials for %s\n", key)
 		return nil
-	case config.ErrNotLoggedIn:
+	}
+
+	if errors.Is(err, config.ErrNotLoggedIn) {
 		authConfig, err := config.GetCredentials(systemContext, key)
 		if err != nil {
-			return errors.Wrap(err, "get credentials")
+			return fmt.Errorf("get credentials: %w", err)
 		}
 
 		authInvalid := docker.CheckAuth(context.Background(), systemContext, authConfig.Username, authConfig.Password, registry)
 		if authConfig.Username != "" && authConfig.Password != "" && authInvalid == nil {
-			fmt.Printf("Not logged into %s with current tool. Existing credentials were established via docker login. Please use docker logout instead.\n", key)
+			fmt.Printf("Not logged into %s with current tool. Existing credentials were established via docker login. Please use docker logout instead.\n", key) //nolint:forbidigo
 			return nil
 		}
-		return errors.Errorf("Not logged into %s\n", key)
-	default:
-		return errors.Wrapf(err, "logging out of %q", key)
+		return fmt.Errorf("not logged into %s", key)
 	}
+
+	return fmt.Errorf("logging out of %q: %w", key, err)
 }
 
 // defaultRegistryWhenUnspecified returns first registry from search list of registry.conf
@@ -324,7 +394,7 @@ func Logout(systemContext *types.SystemContext, opts *LogoutOptions, args []stri
 func defaultRegistryWhenUnspecified(systemContext *types.SystemContext) (string, error) {
 	registriesFromFile, err := sysregistriesv2.UnqualifiedSearchRegistries(systemContext)
 	if err != nil {
-		return "", errors.Wrap(err, "getting registry from registry.conf, please specify a registry")
+		return "", fmt.Errorf("getting registry from registry.conf, please specify a registry: %w", err)
 	}
 	if len(registriesFromFile) == 0 {
 		return "", errors.New("no registries found in registries.conf, a registry must be provided")

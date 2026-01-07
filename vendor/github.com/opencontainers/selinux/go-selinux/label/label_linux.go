@@ -3,8 +3,6 @@ package label
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/user"
 	"strings"
 
 	"github.com/opencontainers/selinux/go-selinux"
@@ -81,12 +79,6 @@ func InitLabels(options []string) (plabel string, mlabel string, retErr error) {
 	return processLabel, mountLabel, nil
 }
 
-// Deprecated: The GenLabels function is only to be used during the transition
-// to the official API. Use InitLabels(strings.Fields(options)) instead.
-func GenLabels(options string) (string, string, error) {
-	return InitLabels(strings.Fields(options))
-}
-
 // SetFileLabel modifies the "path" label to the specified file label
 func SetFileLabel(path string, fileLabel string) error {
 	if !selinux.GetEnabled() || fileLabel == "" {
@@ -113,50 +105,6 @@ func Relabel(path string, fileLabel string, shared bool) error {
 		return nil
 	}
 
-	exclude_paths := map[string]bool{
-		"/":           true,
-		"/bin":        true,
-		"/boot":       true,
-		"/dev":        true,
-		"/etc":        true,
-		"/etc/passwd": true,
-		"/etc/pki":    true,
-		"/etc/shadow": true,
-		"/home":       true,
-		"/lib":        true,
-		"/lib64":      true,
-		"/media":      true,
-		"/opt":        true,
-		"/proc":       true,
-		"/root":       true,
-		"/run":        true,
-		"/sbin":       true,
-		"/srv":        true,
-		"/sys":        true,
-		"/tmp":        true,
-		"/usr":        true,
-		"/var":        true,
-		"/var/lib":    true,
-		"/var/log":    true,
-	}
-
-	if home := os.Getenv("HOME"); home != "" {
-		exclude_paths[home] = true
-	}
-
-	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-		if usr, err := user.Lookup(sudoUser); err == nil {
-			exclude_paths[usr.HomeDir] = true
-		}
-	}
-
-	if path != "/" {
-		path = strings.TrimSuffix(path, "/")
-	}
-	if exclude_paths[path] {
-		return fmt.Errorf("SELinux relabeling of %s is not allowed", path)
-	}
-
 	if shared {
 		c, err := selinux.NewContext(fileLabel)
 		if err != nil {
@@ -166,16 +114,8 @@ func Relabel(path string, fileLabel string, shared bool) error {
 		c["level"] = "s0"
 		fileLabel = c.Get()
 	}
-	if err := selinux.Chcon(path, fileLabel, true); err != nil {
-		return err
-	}
-	return nil
+	return selinux.Chcon(path, fileLabel, true)
 }
-
-// DisableSecOpt returns a security opt that can disable labeling
-// support for future container processes
-// Deprecated: use selinux.DisableSecOpt
-var DisableSecOpt = selinux.DisableSecOpt
 
 // Validate checks that the label does not include unexpected options
 func Validate(label string) error {

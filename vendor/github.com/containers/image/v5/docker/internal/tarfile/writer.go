@@ -4,18 +4,21 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/containers/image/v5/docker/reference"
+	"github.com/containers/image/v5/internal/private"
+	"github.com/containers/image/v5/internal/set"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
 	"github.com/opencontainers/go-digest"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -29,7 +32,7 @@ type Writer struct {
 	// Other state.
 	blobs            map[digest.Digest]types.BlobInfo // list of already-sent blobs
 	repositories     map[string]map[string]string
-	legacyLayers     map[string]struct{} // A set of IDs of legacy layers that have been already sent.
+	legacyLayers     *set.Set[string] // A set of IDs of legacy layers that have been already sent.
 	manifest         []ManifestItem
 	manifestByConfig map[digest.Digest]int // A map from config digest to an entry index in manifest above.
 }
@@ -42,7 +45,7 @@ func NewWriter(dest io.Writer) *Writer {
 		tar:              tar.NewWriter(dest),
 		blobs:            make(map[digest.Digest]types.BlobInfo),
 		repositories:     map[string]map[string]string{},
-		legacyLayers:     map[string]struct{}{},
+		legacyLayers:     set.New[string](),
 		manifestByConfig: map[digest.Digest]int{},
 	}
 }
@@ -67,17 +70,17 @@ func (w *Writer) unlock() {
 
 // tryReusingBlobLocked checks whether the transport already contains, a blob, and if so, returns its metadata.
 // info.Digest must not be empty.
-// If the blob has been successfully reused, returns (true, info, nil); info must contain at least a digest and size.
+// If the blob has been successfully reused, returns (true, info, nil).
 // If the transport can not reuse the requested blob, tryReusingBlob returns (false, {}, nil); it returns a non-nil error only on an unexpected failure.
 // The caller must have locked the Writer.
-func (w *Writer) tryReusingBlobLocked(info types.BlobInfo) (bool, types.BlobInfo, error) {
+func (w *Writer) tryReusingBlobLocked(info types.BlobInfo) (bool, private.ReusedBlob, error) {
 	if info.Digest == "" {
-		return false, types.BlobInfo{}, errors.Errorf("Can not check for a blob with unknown digest")
+		return false, private.ReusedBlob{}, errors.New("Can not check for a blob with unknown digest")
 	}
 	if blob, ok := w.blobs[info.Digest]; ok {
-		return true, types.BlobInfo{Digest: info.Digest, Size: blob.Size}, nil
+		return true, private.ReusedBlob{Digest: info.Digest, Size: blob.Size}, nil
 	}
-	return false, types.BlobInfo{}, nil
+	return false, private.ReusedBlob{}, nil
 }
 
 // recordBlob records metadata of a recorded blob, which must contain at least a digest and size.
@@ -89,24 +92,27 @@ func (w *Writer) recordBlobLocked(info types.BlobInfo) {
 // ensureSingleLegacyLayerLocked writes legacy VERSION and configuration files for a single layer
 // The caller must have locked the Writer.
 func (w *Writer) ensureSingleLegacyLayerLocked(layerID string, layerDigest digest.Digest, configBytes []byte) error {
-	if _, ok := w.legacyLayers[layerID]; !ok {
+	if !w.legacyLayers.Contains(layerID) {
 		// Create a symlink for the legacy format, where there is one subdirectory per layer ("image").
 		// See also the comment in physicalLayerPath.
-		physicalLayerPath := w.physicalLayerPath(layerDigest)
+		physicalLayerPath, err := w.physicalLayerPath(layerDigest)
+		if err != nil {
+			return err
+		}
 		if err := w.sendSymlinkLocked(filepath.Join(layerID, legacyLayerFileName), filepath.Join("..", physicalLayerPath)); err != nil {
-			return errors.Wrap(err, "creating layer symbolic link")
+			return fmt.Errorf("creating layer symbolic link: %w", err)
 		}
 
 		b := []byte("1.0")
 		if err := w.sendBytesLocked(filepath.Join(layerID, legacyVersionFileName), b); err != nil {
-			return errors.Wrap(err, "writing VERSION file")
+			return fmt.Errorf("writing VERSION file: %w", err)
 		}
 
 		if err := w.sendBytesLocked(filepath.Join(layerID, legacyConfigFileName), configBytes); err != nil {
-			return errors.Wrap(err, "writing config json file")
+			return fmt.Errorf("writing config json file: %w", err)
 		}
 
-		w.legacyLayers[layerID] = struct{}{}
+		w.legacyLayers.Add(layerID)
 	}
 	return nil
 }
@@ -117,7 +123,7 @@ func (w *Writer) writeLegacyMetadataLocked(layerDescriptors []manifest.Schema2De
 	lastLayerID := ""
 	for i, l := range layerDescriptors {
 		// The legacy format requires a config file per layer
-		layerConfig := make(map[string]interface{})
+		layerConfig := make(map[string]any)
 
 		// The root layer doesn't have any parent
 		if lastLayerID != "" {
@@ -128,7 +134,7 @@ func (w *Writer) writeLegacyMetadataLocked(layerDescriptors []manifest.Schema2De
 			var config map[string]*json.RawMessage
 			err := json.Unmarshal(configBytes, &config)
 			if err != nil {
-				return errors.Wrap(err, "unmarshaling config")
+				return fmt.Errorf("unmarshaling config: %w", err)
 			}
 			for _, attr := range [7]string{"architecture", "config", "container", "container_config", "created", "docker_version", "os"} {
 				layerConfig[attr] = config[attr]
@@ -136,6 +142,9 @@ func (w *Writer) writeLegacyMetadataLocked(layerDescriptors []manifest.Schema2De
 		}
 
 		// This chainID value matches the computation in docker/docker/layer.CreateChainID …
+		if err := l.Digest.Validate(); err != nil { // This should never fail on this code path, still: make sure the chainID computation is unambiguous.
+			return err
+		}
 		if chainID == "" {
 			chainID = l.Digest
 		} else {
@@ -152,15 +161,15 @@ func (w *Writer) writeLegacyMetadataLocked(layerDescriptors []manifest.Schema2De
 		layerConfig["layer_id"] = chainID
 		b, err := json.Marshal(layerConfig) // Note that layerConfig["id"] is not set yet at this point.
 		if err != nil {
-			return errors.Wrap(err, "marshaling layer config")
+			return fmt.Errorf("marshaling layer config: %w", err)
 		}
 		delete(layerConfig, "layer_id")
-		layerID := digest.Canonical.FromBytes(b).Hex()
+		layerID := digest.Canonical.FromBytes(b).Encoded()
 		layerConfig["id"] = layerID
 
 		configBytes, err := json.Marshal(layerConfig)
 		if err != nil {
-			return errors.Wrap(err, "marshaling layer config")
+			return fmt.Errorf("marshaling layer config: %w", err)
 		}
 
 		if err := w.ensureSingleLegacyLayerLocked(layerID, l.Digest, configBytes); err != nil {
@@ -188,13 +197,8 @@ func checkManifestItemsMatch(a, b *ManifestItem) error {
 	if a.Config != b.Config {
 		return fmt.Errorf("Internal error: Trying to reuse ManifestItem values with configs %#v vs. %#v", a.Config, b.Config)
 	}
-	if len(a.Layers) != len(b.Layers) {
+	if !slices.Equal(a.Layers, b.Layers) {
 		return fmt.Errorf("Internal error: Trying to reuse ManifestItem values with layers %#v vs. %#v", a.Layers, b.Layers)
-	}
-	for i := range a.Layers {
-		if a.Layers[i] != b.Layers[i] {
-			return fmt.Errorf("Internal error: Trying to reuse ManifestItem values with layers[i] %#v vs. %#v", a.Layers[i], b.Layers[i])
-		}
 	}
 	// Ignore RepoTags, that will be built later.
 	// Ignore Parent and LayerSources, which we don’t set to anything meaningful.
@@ -206,12 +210,20 @@ func checkManifestItemsMatch(a, b *ManifestItem) error {
 func (w *Writer) ensureManifestItemLocked(layerDescriptors []manifest.Schema2Descriptor, configDigest digest.Digest, repoTags []reference.NamedTagged) error {
 	layerPaths := []string{}
 	for _, l := range layerDescriptors {
-		layerPaths = append(layerPaths, w.physicalLayerPath(l.Digest))
+		p, err := w.physicalLayerPath(l.Digest)
+		if err != nil {
+			return err
+		}
+		layerPaths = append(layerPaths, p)
 	}
 
 	var item *ManifestItem
+	configPath, err := w.configPath(configDigest)
+	if err != nil {
+		return err
+	}
 	newItem := ManifestItem{
-		Config:       w.configPath(configDigest),
+		Config:       configPath,
 		RepoTags:     []string{},
 		Layers:       layerPaths,
 		Parent:       "", // We don’t have this information
@@ -229,10 +241,8 @@ func (w *Writer) ensureManifestItemLocked(layerDescriptors []manifest.Schema2Des
 		item = &w.manifest[i]
 	}
 
-	knownRepoTags := map[string]struct{}{}
-	for _, repoTag := range item.RepoTags {
-		knownRepoTags[repoTag] = struct{}{}
-	}
+	knownRepoTags := set.New[string]()
+	knownRepoTags.AddSeq(slices.Values(item.RepoTags))
 	for _, tag := range repoTags {
 		// For github.com/docker/docker consumers, this works just as well as
 		//   refString := ref.String()
@@ -252,9 +262,9 @@ func (w *Writer) ensureManifestItemLocked(layerDescriptors []manifest.Schema2Des
 		// analysis and explanation.
 		refString := fmt.Sprintf("%s:%s", tag.Name(), tag.Tag())
 
-		if _, ok := knownRepoTags[refString]; !ok {
+		if !knownRepoTags.Contains(refString) {
 			item.RepoTags = append(item.RepoTags, refString)
-			knownRepoTags[refString] = struct{}{}
+			knownRepoTags.Add(refString)
 		}
 	}
 
@@ -280,10 +290,10 @@ func (w *Writer) Close() error {
 
 	b, err = json.Marshal(w.repositories)
 	if err != nil {
-		return errors.Wrap(err, "marshaling repositories")
+		return fmt.Errorf("marshaling repositories: %w", err)
 	}
 	if err := w.sendBytesLocked(legacyRepositoriesFileName, b); err != nil {
-		return errors.Wrap(err, "writing config json file")
+		return fmt.Errorf("writing config json file: %w", err)
 	}
 
 	if err := w.tar.Close(); err != nil {
@@ -296,21 +306,27 @@ func (w *Writer) Close() error {
 // configPath returns a path we choose for storing a config with the specified digest.
 // NOTE: This is an internal implementation detail, not a format property, and can change
 // any time.
-func (w *Writer) configPath(configDigest digest.Digest) string {
-	return configDigest.Hex() + ".json"
+func (w *Writer) configPath(configDigest digest.Digest) (string, error) {
+	if err := configDigest.Validate(); err != nil { // digest.Digest.Encoded() panics on failure, and could possibly result in unexpected paths, so validate explicitly.
+		return "", err
+	}
+	return configDigest.Encoded() + ".json", nil
 }
 
 // physicalLayerPath returns a path we choose for storing a layer with the specified digest
 // (the actual path, i.e. a regular file, not a symlink that may be used in the legacy format).
 // NOTE: This is an internal implementation detail, not a format property, and can change
 // any time.
-func (w *Writer) physicalLayerPath(layerDigest digest.Digest) string {
-	// Note that this can't be e.g. filepath.Join(l.Digest.Hex(), legacyLayerFileName); due to the way
+func (w *Writer) physicalLayerPath(layerDigest digest.Digest) (string, error) {
+	if err := layerDigest.Validate(); err != nil { // digest.Digest.Encoded() panics on failure, and could possibly result in unexpected paths, so validate explicitly.
+		return "", err
+	}
+	// Note that this can't be e.g. filepath.Join(l.Digest.Encoded(), legacyLayerFileName); due to the way
 	// writeLegacyMetadata constructs layer IDs differently from inputinfo.Digest values (as described
 	// inside it), most of the layers would end up in subdirectories alone without any metadata; (docker load)
 	// tries to load every subdirectory as an image and fails if the config is missing.  So, keep the layers
 	// in the root of the tarball.
-	return layerDigest.Hex() + ".tar"
+	return layerDigest.Encoded() + ".tar", nil
 }
 
 type tarFI struct {
@@ -337,7 +353,7 @@ func (t *tarFI) ModTime() time.Time {
 func (t *tarFI) IsDir() bool {
 	return false
 }
-func (t *tarFI) Sys() interface{} {
+func (t *tarFI) Sys() any {
 	return nil
 }
 
@@ -346,7 +362,7 @@ func (t *tarFI) Sys() interface{} {
 func (w *Writer) sendSymlinkLocked(path string, target string) error {
 	hdr, err := tar.FileInfoHeader(&tarFI{path: path, size: 0, isSymlink: true}, target)
 	if err != nil {
-		return nil
+		return err
 	}
 	logrus.Debugf("Sending as tar link %s -> %s", path, target)
 	return w.tar.WriteHeader(hdr)
@@ -363,7 +379,7 @@ func (w *Writer) sendBytesLocked(path string, b []byte) error {
 func (w *Writer) sendFileLocked(path string, expectedSize int64, stream io.Reader) error {
 	hdr, err := tar.FileInfoHeader(&tarFI{path: path, size: expectedSize}, "")
 	if err != nil {
-		return nil
+		return err
 	}
 	logrus.Debugf("Sending as tar file %s", path)
 	if err := w.tar.WriteHeader(hdr); err != nil {
@@ -375,7 +391,7 @@ func (w *Writer) sendFileLocked(path string, expectedSize int64, stream io.Reade
 		return err
 	}
 	if size != expectedSize {
-		return errors.Errorf("Size mismatch when copying %s, expected %d, got %d", path, expectedSize, size)
+		return fmt.Errorf("Size mismatch when copying %s, expected %d, got %d", path, expectedSize, size)
 	}
 	return nil
 }

@@ -6,9 +6,10 @@
 package flate
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/bits"
+
+	"github.com/klauspost/compress/internal/le"
 )
 
 type fastEnc interface {
@@ -58,27 +59,12 @@ const (
 	prime8bytes = 0xcf1bbcdcb7a56463
 )
 
-func load32(b []byte, i int) uint32 {
-	// Help the compiler eliminate bounds checks on the read so it can be done in a single read.
-	b = b[i:]
-	b = b[:4]
-	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
-}
-
-func load64(b []byte, i int) uint64 {
-	return binary.LittleEndian.Uint64(b[i:])
-}
-
 func load3232(b []byte, i int32) uint32 {
-	return binary.LittleEndian.Uint32(b[i:])
+	return le.Load32(b, i)
 }
 
 func load6432(b []byte, i int32) uint64 {
-	return binary.LittleEndian.Uint64(b[i:])
-}
-
-func hash(u uint32) uint32 {
-	return (u * 0x1e35a7bd) >> tableShift
+	return le.Load64(b, i)
 }
 
 type tableEntry struct {
@@ -104,7 +90,8 @@ func (e *fastGen) addBlock(src []byte) int32 {
 			}
 			// Move down
 			offset := int32(len(e.hist)) - maxMatchOffset
-			copy(e.hist[0:maxMatchOffset], e.hist[offset:])
+			// copy(e.hist[0:maxMatchOffset], e.hist[offset:])
+			*(*[maxMatchOffset]byte)(e.hist) = *(*[maxMatchOffset]byte)(e.hist[offset:])
 			e.cur += offset
 			e.hist = e.hist[:maxMatchOffset]
 		}
@@ -114,21 +101,9 @@ func (e *fastGen) addBlock(src []byte) int32 {
 	return s
 }
 
-// hash4 returns the hash of u to fit in a hash table with h bits.
-// Preferably h should be a constant and should always be <32.
-func hash4u(u uint32, h uint8) uint32 {
-	return (u * prime4bytes) >> (32 - h)
-}
-
 type tableEntryPrev struct {
 	Cur  tableEntry
 	Prev tableEntry
-}
-
-// hash4x64 returns the hash of the lowest 4 bytes of u to fit in a hash table with h bits.
-// Preferably h should be a constant and should always be <32.
-func hash4x64(u uint64, h uint8) uint32 {
-	return (uint32(u) * prime4bytes) >> ((32 - h) & reg8SizeMask32)
 }
 
 // hash7 returns the hash of the lowest 7 bytes of u to fit in a hash table with h bits.
@@ -137,23 +112,32 @@ func hash7(u uint64, h uint8) uint32 {
 	return uint32(((u << (64 - 56)) * prime7bytes) >> ((64 - h) & reg8SizeMask64))
 }
 
-// hash8 returns the hash of u to fit in a hash table with h bits.
-// Preferably h should be a constant and should always be <64.
-func hash8(u uint64, h uint8) uint32 {
-	return uint32((u * prime8bytes) >> ((64 - h) & reg8SizeMask64))
-}
-
-// hash6 returns the hash of the lowest 6 bytes of u to fit in a hash table with h bits.
-// Preferably h should be a constant and should always be <64.
-func hash6(u uint64, h uint8) uint32 {
-	return uint32(((u << (64 - 48)) * prime6bytes) >> ((64 - h) & reg8SizeMask64))
+// hashLen returns a hash of the lowest mls bytes of with length output bits.
+// mls must be >=3 and <=8. Any other value will return hash for 4 bytes.
+// length should always be < 32.
+// Preferably length and mls should be a constant for inlining.
+func hashLen(u uint64, length, mls uint8) uint32 {
+	switch mls {
+	case 3:
+		return (uint32(u<<8) * prime3bytes) >> (32 - length)
+	case 5:
+		return uint32(((u << (64 - 40)) * prime5bytes) >> (64 - length))
+	case 6:
+		return uint32(((u << (64 - 48)) * prime6bytes) >> (64 - length))
+	case 7:
+		return uint32(((u << (64 - 56)) * prime7bytes) >> (64 - length))
+	case 8:
+		return uint32((u * prime8bytes) >> (64 - length))
+	default:
+		return (uint32(u) * prime4bytes) >> (32 - length)
+	}
 }
 
 // matchlen will return the match length between offsets and t in src.
 // The maximum length returned is maxMatchLength - 4.
 // It is assumed that s > t, that t >=0 and s < len(src).
-func (e *fastGen) matchlen(s, t int32, src []byte) int32 {
-	if debugDecode {
+func (e *fastGen) matchlen(s, t int, src []byte) int32 {
+	if debugDeflate {
 		if t >= s {
 			panic(fmt.Sprint("t >=s:", t, s))
 		}
@@ -167,18 +151,34 @@ func (e *fastGen) matchlen(s, t int32, src []byte) int32 {
 			panic(fmt.Sprint(s, "-", t, "(", s-t, ") > maxMatchLength (", maxMatchOffset, ")"))
 		}
 	}
-	s1 := int(s) + maxMatchLength - 4
-	if s1 > len(src) {
-		s1 = len(src)
+	s1 := min(s+maxMatchLength-4, len(src))
+	left := s1 - s
+	n := int32(0)
+	for left >= 8 {
+		diff := le.Load64(src, s) ^ le.Load64(src, t)
+		if diff != 0 {
+			return n + int32(bits.TrailingZeros64(diff)>>3)
+		}
+		s += 8
+		t += 8
+		n += 8
+		left -= 8
 	}
 
-	// Extend the match to be as long as possible.
-	return int32(matchLen(src[s:s1], src[t:]))
+	a := src[s:s1]
+	b := src[t:]
+	for i := range a {
+		if a[i] != b[i] {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // matchlenLong will return the match length between offsets and t in src.
 // It is assumed that s > t, that t >=0 and s < len(src).
-func (e *fastGen) matchlenLong(s, t int32, src []byte) int32 {
+func (e *fastGen) matchlenLong(s, t int, src []byte) int32 {
 	if debugDeflate {
 		if t >= s {
 			panic(fmt.Sprint("t >=s:", t, s))
@@ -194,7 +194,28 @@ func (e *fastGen) matchlenLong(s, t int32, src []byte) int32 {
 		}
 	}
 	// Extend the match to be as long as possible.
-	return int32(matchLen(src[s:], src[t:]))
+	left := len(src) - s
+	n := int32(0)
+	for left >= 8 {
+		diff := le.Load64(src, s) ^ le.Load64(src, t)
+		if diff != 0 {
+			return n + int32(bits.TrailingZeros64(diff)>>3)
+		}
+		s += 8
+		t += 8
+		n += 8
+		left -= 8
+	}
+
+	a := src[s:]
+	b := src[t:]
+	for i := range a {
+		if a[i] != b[i] {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // Reset the encoding table.
@@ -208,26 +229,4 @@ func (e *fastGen) Reset() {
 		e.cur += maxMatchOffset + int32(len(e.hist))
 	}
 	e.hist = e.hist[:0]
-}
-
-// matchLen returns the maximum length.
-// 'a' must be the shortest of the two.
-func matchLen(a, b []byte) int {
-	var checked int
-
-	for len(a) >= 8 {
-		if diff := binary.LittleEndian.Uint64(a) ^ binary.LittleEndian.Uint64(b); diff != 0 {
-			return checked + (bits.TrailingZeros64(diff) >> 3)
-		}
-		checked += 8
-		a = a[8:]
-		b = b[8:]
-	}
-	b = b[:len(a)]
-	for i := range a {
-		if a[i] != b[i] {
-			return i + checked
-		}
-	}
-	return len(a) + checked
 }

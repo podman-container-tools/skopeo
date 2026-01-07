@@ -1,4 +1,4 @@
-// +build !windows,!linux,!darwin
+//go:build !windows && !linux && !darwin
 
 package chrootarchive
 

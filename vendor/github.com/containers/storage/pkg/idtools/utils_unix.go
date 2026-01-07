@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 package idtools
 
@@ -19,8 +18,8 @@ func resolveBinary(binname string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	//only return no error if the final resolved binary basename
-	//matches what was searched for
+	// only return no error if the final resolved binary basename
+	// matches what was searched for
 	if filepath.Base(resolvedPath) == binname {
 		return resolvedPath, nil
 	}

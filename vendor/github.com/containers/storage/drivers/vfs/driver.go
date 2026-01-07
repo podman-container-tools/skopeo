@@ -10,8 +10,11 @@ import (
 	"strings"
 
 	graphdriver "github.com/containers/storage/drivers"
+	"github.com/containers/storage/internal/dedup"
+	"github.com/containers/storage/internal/tempdir"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/directory"
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/parsers"
 	"github.com/containers/storage/pkg/system"
@@ -20,15 +23,13 @@ import (
 	"github.com/vbatts/tar-split/tar/storage"
 )
 
-var (
-	// CopyDir defines the copy method to use.
-	CopyDir = dirCopy
+const (
+	defaultPerms = os.FileMode(0o555)
+	tempDirName  = "tempdirs"
 )
 
-const defaultPerms = os.FileMode(0555)
-
 func init() {
-	graphdriver.Register("vfs", Init)
+	graphdriver.MustRegister("vfs", Init)
 }
 
 // Init returns a new VFS driver.
@@ -36,16 +37,14 @@ func init() {
 func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) {
 	d := &Driver{
 		name:       "vfs",
-		homes:      []string{home},
-		idMappings: idtools.NewIDMappingsFromMaps(options.UIDMaps, options.GIDMaps),
+		home:       home,
+		imageStore: options.ImageStore,
 	}
 
-	rootIDs := d.idMappings.RootPair()
-	if err := idtools.MkdirAllAndChown(home, 0700, rootIDs); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, "dir"), 0o700); err != nil {
 		return nil, err
 	}
 	for _, option := range options.DriverOptions {
-
 		key, val, err := parsers.ParseKeyValueOpt(option)
 		if err != nil {
 			return nil, err
@@ -53,7 +52,7 @@ func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) 
 		key = strings.ToLower(key)
 		switch key {
 		case "vfs.imagestore", ".imagestore":
-			d.homes = append(d.homes, strings.Split(val, ",")...)
+			d.additionalHomes = append(d.additionalHomes, strings.Split(val, ",")...)
 			continue
 		case "vfs.mountopt":
 			return nil, fmt.Errorf("vfs driver does not support mount options")
@@ -68,6 +67,7 @@ func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) 
 			return nil, fmt.Errorf("vfs driver does not support %s options", key)
 		}
 	}
+
 	d.updater = graphdriver.NewNaiveLayerIDMapUpdater(d)
 	d.naiveDiff = graphdriver.NewNaiveDiffDriver(d, d.updater)
 
@@ -80,11 +80,12 @@ func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) 
 // Driver must be wrapped in NaiveDiffDriver to be used as a graphdriver.Driver
 type Driver struct {
 	name              string
-	homes             []string
-	idMappings        *idtools.IDMappings
+	home              string
+	additionalHomes   []string
 	ignoreChownErrors bool
 	naiveDiff         graphdriver.DiffDriver
 	updater           graphdriver.LayerIDMapUpdater
+	imageStore        string
 }
 
 func (d *Driver) String() string {
@@ -98,7 +99,7 @@ func (d *Driver) Status() [][2]string {
 
 // Metadata is used for implementing the graphdriver.ProtoDriver interface. VFS does not currently have any meta data.
 func (d *Driver) Metadata(id string) (map[string]string, error) {
-	return nil, nil
+	return nil, nil //nolint: nilnil
 }
 
 // Cleanup is used to implement graphdriver.ProtoDriver. There is no cleanup required for this driver.
@@ -153,14 +154,21 @@ func (d *Driver) create(id, parent string, opts *graphdriver.CreateOpts, ro bool
 		return fmt.Errorf("--storage-opt is not supported for vfs")
 	}
 
-	idMappings := d.idMappings
+	var uidMaps []idtools.IDMap
+	var gidMaps []idtools.IDMap
+
 	if opts != nil && opts.IDMappings != nil {
-		idMappings = opts.IDMappings
+		uidMaps = opts.IDMappings.UIDs()
+		gidMaps = opts.IDMappings.GIDs()
 	}
 
-	dir := d.dir(id)
-	rootIDs := idMappings.RootPair()
-	if err := idtools.MkdirAllAndChown(filepath.Dir(dir), 0700, rootIDs); err != nil {
+	rootUID, rootGID, err := idtools.GetRootUIDGID(uidMaps, gidMaps)
+	if err != nil {
+		return err
+	}
+
+	dir := d.dir2(id, ro)
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return err
 	}
 
@@ -172,29 +180,32 @@ func (d *Driver) create(id, parent string, opts *graphdriver.CreateOpts, ro bool
 
 	rootPerms := defaultPerms
 	if runtime.GOOS == "darwin" {
-		rootPerms = os.FileMode(0700)
+		rootPerms = os.FileMode(0o700)
 	}
 
+	idPair := idtools.IDPair{UID: rootUID, GID: rootGID}
 	if parent != "" {
 		st, err := system.Stat(d.dir(parent))
 		if err != nil {
 			return err
 		}
 		rootPerms = os.FileMode(st.Mode())
-		rootIDs.UID = int(st.UID())
-		rootIDs.GID = int(st.GID())
+		idPair.UID = int(st.UID())
+		idPair.GID = int(st.GID())
 	}
-	if err := idtools.MkdirAndChown(dir, rootPerms, rootIDs); err != nil {
+	if err := idtools.MkdirAllAndChownNew(dir, rootPerms, idPair); err != nil {
 		return err
 	}
 	labelOpts := []string{"level:s0"}
 	if _, mountLabel, err := label.InitLabels(labelOpts); err == nil {
-		label.SetFileLabel(dir, mountLabel)
+		if err := label.SetFileLabel(dir, mountLabel); err != nil {
+			logrus.Debugf("Set %s label to %q file ended with error: %v", mountLabel, dir, err)
+		}
 	}
 	if parent != "" {
 		parentDir, err := d.Get(parent, graphdriver.MountOpts{})
 		if err != nil {
-			return fmt.Errorf("%s: %s", parent, err)
+			return fmt.Errorf("%s: %w", parent, err)
 		}
 		if err := dirCopy(parentDir, dir); err != nil {
 			return err
@@ -202,21 +213,34 @@ func (d *Driver) create(id, parent string, opts *graphdriver.CreateOpts, ro bool
 	}
 
 	return nil
+}
 
+func (d *Driver) dir2(id string, useImageStore bool) string {
+	var homedir string
+
+	if useImageStore && d.imageStore != "" {
+		homedir = filepath.Join(d.imageStore, d.String(), "dir", filepath.Base(id))
+	} else {
+		homedir = filepath.Join(d.home, "dir", filepath.Base(id))
+	}
+	if err := fileutils.Exists(homedir); err != nil {
+		additionalHomes := d.additionalHomes[:]
+		if d.imageStore != "" {
+			additionalHomes = append(additionalHomes, d.imageStore)
+		}
+		for _, home := range additionalHomes {
+			candidate := filepath.Join(home, d.String(), "dir", filepath.Base(id))
+			fi, err := os.Stat(candidate)
+			if err == nil && fi.IsDir() {
+				return candidate
+			}
+		}
+	}
+	return homedir
 }
 
 func (d *Driver) dir(id string) string {
-	for i, home := range d.homes {
-		if i > 0 {
-			home = filepath.Join(home, d.String())
-		}
-		candidate := filepath.Join(home, "dir", filepath.Base(id))
-		fi, err := os.Stat(candidate)
-		if err == nil && fi.IsDir() {
-			return candidate
-		}
-	}
-	return filepath.Join(d.homes[0], "dir", filepath.Base(id))
+	return d.dir2(id, false)
 }
 
 // Remove deletes the content from the directory for a given id.
@@ -224,18 +248,51 @@ func (d *Driver) Remove(id string) error {
 	return system.EnsureRemoveAll(d.dir(id))
 }
 
+func (d *Driver) GetTempDirRootDirs() []string {
+	tempDirs := []string{filepath.Join(d.home, tempDirName)}
+	// Include imageStore temp directory if it's configured
+	// Writable layers can only be in d.home or d.imageStore, not in additionalHomes (which are read-only)
+	if d.imageStore != "" {
+		tempDirs = append(tempDirs, filepath.Join(d.imageStore, d.String(), tempDirName))
+	}
+	return tempDirs
+}
+
+// Determine the correct temp directory root based on where the layer actually exists.
+func (d *Driver) getTempDirRoot(id string) string {
+	layerDir := d.dir(id)
+	if d.imageStore != "" {
+		expectedLayerDir := filepath.Join(d.imageStore, d.String(), "dir", filepath.Base(id))
+		if layerDir == expectedLayerDir {
+			return filepath.Join(d.imageStore, d.String(), tempDirName)
+		}
+	}
+	return filepath.Join(d.home, tempDirName)
+}
+
+func (d *Driver) DeferredRemove(id string) (tempdir.CleanupTempDirFunc, error) {
+	tempDirRoot := d.getTempDirRoot(id)
+	t, err := tempdir.NewTempDir(tempDirRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	layerDir := d.dir(id)
+	if err := t.StageDeletion(layerDir); err != nil {
+		return t.Cleanup, err
+	}
+	return t.Cleanup, nil
+}
+
 // Get returns the directory for the given id.
 func (d *Driver) Get(id string, options graphdriver.MountOpts) (_ string, retErr error) {
 	dir := d.dir(id)
-	switch len(options.Options) {
-	case 0:
-	case 1:
-		if options.Options[0] == "ro" {
+
+	for _, opt := range options.Options {
+		if opt == "ro" {
 			// ignore "ro" option
-			break
+			continue
 		}
-		fallthrough
-	default:
 		return "", fmt.Errorf("vfs driver does not support mount options")
 	}
 	if st, err := os.Stat(dir); err != nil {
@@ -261,27 +318,57 @@ func (d *Driver) ReadWriteDiskUsage(id string) (*directory.DiskUsage, error) {
 
 // Exists checks to see if the directory exists for the given id.
 func (d *Driver) Exists(id string) bool {
-	_, err := os.Stat(d.dir(id))
+	err := fileutils.Exists(d.dir(id))
 	return err == nil
+}
+
+// List layers (not including additional image stores)
+func (d *Driver) ListLayers() ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(d.home, "dir"))
+	if err != nil {
+		return nil, err
+	}
+
+	layers := make([]string, 0)
+
+	for _, entry := range entries {
+		id := entry.Name()
+		// Does it look like a datadir directory?
+		if !entry.IsDir() {
+			continue
+		}
+
+		layers = append(layers, id)
+	}
+
+	return layers, err
 }
 
 // AdditionalImageStores returns additional image stores supported by the driver
 func (d *Driver) AdditionalImageStores() []string {
-	if len(d.homes) > 1 {
-		return d.homes[1:]
+	if len(d.additionalHomes) > 0 {
+		return d.additionalHomes
 	}
 	return nil
 }
 
-// SupportsShifting tells whether the driver support shifting of the UIDs/GIDs in an userNS
-func (d *Driver) SupportsShifting() bool {
-	return d.updater.SupportsShifting()
+// SupportsShifting tells whether the driver support shifting of the UIDs/GIDs to the provided mapping in an userNS
+func (d *Driver) SupportsShifting(uidmap, gidmap []idtools.IDMap) bool {
+	return d.updater.SupportsShifting(uidmap, gidmap)
 }
 
 // UpdateLayerIDMap updates ID mappings in a from matching the ones specified
 // by toContainer to those specified by toHost.
 func (d *Driver) UpdateLayerIDMap(id string, toContainer, toHost *idtools.IDMappings, mountLabel string) error {
-	return d.updater.UpdateLayerIDMap(id, toContainer, toHost, mountLabel)
+	if err := d.updater.UpdateLayerIDMap(id, toContainer, toHost, mountLabel); err != nil {
+		return err
+	}
+	dir := d.dir(id)
+	rootIDs, err := toHost.ToHost(idtools.IDPair{UID: 0, GID: 0})
+	if err != nil {
+		return err
+	}
+	return os.Chown(dir, rootIDs.UID, rootIDs.GID)
 }
 
 // Changes produces a list of changes between the specified layer
@@ -301,4 +388,20 @@ func (d *Driver) Diff(id string, idMappings *idtools.IDMappings, parent string, 
 // relative to its base filesystem directory.
 func (d *Driver) DiffSize(id string, idMappings *idtools.IDMappings, parent string, parentMappings *idtools.IDMappings, mountLabel string) (size int64, err error) {
 	return d.naiveDiff.DiffSize(id, idMappings, parent, parentMappings, mountLabel)
+}
+
+// Dedup performs deduplication of the driver's storage.
+func (d *Driver) Dedup(req graphdriver.DedupArgs) (graphdriver.DedupResult, error) {
+	var dirs []string
+	for _, layer := range req.Layers {
+		dir := d.dir2(layer, false)
+		if err := fileutils.Exists(dir); err == nil {
+			dirs = append(dirs, dir)
+		}
+	}
+	r, err := dedup.DedupDirs(dirs, req.Options)
+	if err != nil {
+		return graphdriver.DedupResult{}, err
+	}
+	return graphdriver.DedupResult{Deduped: r.Deduped}, nil
 }

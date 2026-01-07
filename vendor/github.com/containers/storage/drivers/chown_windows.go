@@ -1,5 +1,4 @@
 //go:build windows
-// +build windows
 
 package graphdriver
 
@@ -10,8 +9,7 @@ import (
 	"github.com/containers/storage/pkg/idtools"
 )
 
-type platformChowner struct {
-}
+type platformChowner struct{}
 
 func newLChowner() *platformChowner {
 	return &platformChowner{}

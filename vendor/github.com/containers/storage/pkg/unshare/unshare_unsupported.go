@@ -1,5 +1,4 @@
 //go:build !linux && !darwin
-// +build !linux,!darwin
 
 package unshare
 
@@ -17,12 +16,17 @@ const (
 
 // IsRootless tells us if we are running in rootless mode
 func IsRootless() bool {
-	return false
+	return os.Getuid() != 0
 }
 
 // GetRootlessUID returns the UID of the user in the parent userNS
 func GetRootlessUID() int {
 	return os.Getuid()
+}
+
+// GetRootlessGID returns the GID of the user in the parent userNS
+func GetRootlessGID() int {
+	return os.Getgid()
 }
 
 // RootlessEnv returns the environment settings for the rootless containers
