@@ -1,5 +1,4 @@
 //go:build !windows && !darwin
-// +build !windows,!darwin
 
 package graphdriver
 
@@ -37,8 +36,8 @@ func (c *platformChowner) LChown(path string, info os.FileInfo, toHost, toContai
 	}
 
 	i := inode{
-		Dev: uint64(st.Dev),
-		Ino: uint64(st.Ino),
+		Dev: uint64(st.Dev), //nolint:unconvert
+		Ino: st.Ino,
 	}
 
 	c.mutex.Lock()
@@ -102,7 +101,7 @@ func (c *platformChowner) LChown(path string, info os.FileInfo, toHost, toContai
 	}
 	if uid != int(st.Uid) || gid != int(st.Gid) {
 		cap, err := system.Lgetxattr(path, "security.capability")
-		if err != nil && !errors.Is(err, system.EOPNOTSUPP) && !errors.Is(err, system.EOVERFLOW) && err != system.ErrNotSupportedPlatform {
+		if err != nil && !errors.Is(err, system.ENOTSUP) && !errors.Is(err, system.EOVERFLOW) && err != system.ErrNotSupportedPlatform {
 			return fmt.Errorf("%s: %w", os.Args[0], err)
 		}
 

@@ -35,12 +35,15 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/containerd/stargz-snapshotter/estargz/errorutil"
 	"github.com/klauspost/compress/zstd"
 	digest "github.com/opencontainers/go-digest"
 	"golang.org/x/sync/errgroup"
 )
+
+type GzipHelperFunc func(io.Reader) (io.ReadCloser, error)
 
 type options struct {
 	chunkSize              int
@@ -49,6 +52,8 @@ type options struct {
 	missedPrioritizedFiles *[]string
 	compression            Compression
 	ctx                    context.Context
+	minChunkSize           int
+	gzipHelperFunc         GzipHelperFunc
 }
 
 type Option func(o *options) error
@@ -63,6 +68,7 @@ func WithChunkSize(chunkSize int) Option {
 
 // WithCompressionLevel option specifies the gzip compression level.
 // The default is gzip.BestCompression.
+// This option will be ignored if WithCompression option is used.
 // See also: https://godoc.org/compress/gzip#pkg-constants
 func WithCompressionLevel(level int) Option {
 	return func(o *options) error {
@@ -113,11 +119,37 @@ func WithContext(ctx context.Context) Option {
 	}
 }
 
+// WithMinChunkSize option specifies the minimal number of bytes of data
+// must be written in one gzip stream.
+// By increasing this number, one gzip stream can contain multiple files
+// and it hopefully leads to smaller result blob.
+// NOTE: This adds a TOC property that old reader doesn't understand.
+func WithMinChunkSize(minChunkSize int) Option {
+	return func(o *options) error {
+		o.minChunkSize = minChunkSize
+		return nil
+	}
+}
+
+// WithGzipHelperFunc option specifies a custom function to decompress gzip-compressed layers.
+// When a gzip-compressed layer is detected, this function will be used instead of the
+// Go standard library gzip decompression for better performance.
+// The function should take an io.Reader as input and return an io.ReadCloser.
+// If nil, the Go standard library gzip.NewReader will be used.
+func WithGzipHelperFunc(gzipHelperFunc GzipHelperFunc) Option {
+	return func(o *options) error {
+		o.gzipHelperFunc = gzipHelperFunc
+		return nil
+	}
+}
+
 // Blob is an eStargz blob.
 type Blob struct {
 	io.ReadCloser
-	diffID    digest.Digester
-	tocDigest digest.Digest
+	diffID           digest.Digester
+	tocDigest        digest.Digest
+	readCompleted    *atomic.Bool
+	uncompressedSize *atomic.Int64
 }
 
 // DiffID returns the digest of uncompressed blob.
@@ -129,6 +161,19 @@ func (b *Blob) DiffID() digest.Digest {
 // TOCDigest returns the digest of uncompressed TOC JSON.
 func (b *Blob) TOCDigest() digest.Digest {
 	return b.tocDigest
+}
+
+// UncompressedSize returns the size of uncompressed blob.
+// UncompressedSize should only be called after the blob has been fully read.
+func (b *Blob) UncompressedSize() (int64, error) {
+	switch {
+	case b.uncompressedSize == nil || b.readCompleted == nil:
+		return -1, fmt.Errorf("readCompleted or uncompressedSize is not initialized")
+	case !b.readCompleted.Load():
+		return -1, fmt.Errorf("called UncompressedSize before the blob has been fully read")
+	default:
+		return b.uncompressedSize.Load(), nil
+	}
 }
 
 // Build builds an eStargz blob which is an extended version of stargz, from a blob (gzip, zstd
@@ -172,7 +217,7 @@ func Build(tarBlob *io.SectionReader, opt ...Option) (_ *Blob, rErr error) {
 			rErr = fmt.Errorf("error from context %q: %w", cErr, rErr)
 		}
 	}()
-	tarBlob, err := decompressBlob(tarBlob, layerFiles)
+	tarBlob, err := decompressBlob(tarBlob, layerFiles, opts.gzipHelperFunc)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +225,14 @@ func Build(tarBlob *io.SectionReader, opt ...Option) (_ *Blob, rErr error) {
 	if err != nil {
 		return nil, err
 	}
-	tarParts := divideEntries(entries, runtime.GOMAXPROCS(0))
+	var tarParts [][]*entry
+	if opts.minChunkSize > 0 {
+		// Each entry needs to know the size of the current gzip stream so they
+		// cannot be processed in parallel.
+		tarParts = [][]*entry{entries}
+	} else {
+		tarParts = divideEntries(entries, runtime.GOMAXPROCS(0))
+	}
 	writers := make([]*Writer, len(tarParts))
 	payloads := make([]*os.File, len(tarParts))
 	var mu sync.Mutex
@@ -195,6 +247,13 @@ func Build(tarBlob *io.SectionReader, opt ...Option) (_ *Blob, rErr error) {
 			}
 			sw := NewWriterWithCompressor(esgzFile, opts.compression)
 			sw.ChunkSize = opts.chunkSize
+			sw.MinChunkSize = opts.minChunkSize
+			if sw.needsOpenGzEntries == nil {
+				sw.needsOpenGzEntries = make(map[string]struct{})
+			}
+			for _, f := range []string{PrefetchLandmark, NoPrefetchLandmark} {
+				sw.needsOpenGzEntries[f] = struct{}{}
+			}
 			if err := sw.AppendTar(readerFromEntries(parts...)); err != nil {
 				return err
 			}
@@ -209,7 +268,7 @@ func Build(tarBlob *io.SectionReader, opt ...Option) (_ *Blob, rErr error) {
 		rErr = err
 		return nil, err
 	}
-	tocAndFooter, tocDgst, err := closeWithCombine(opts.compressionLevel, writers...)
+	tocAndFooter, tocDgst, err := closeWithCombine(writers...)
 	if err != nil {
 		rErr = err
 		return nil, err
@@ -224,17 +283,28 @@ func Build(tarBlob *io.SectionReader, opt ...Option) (_ *Blob, rErr error) {
 	}
 	diffID := digest.Canonical.Digester()
 	pr, pw := io.Pipe()
+	readCompleted := new(atomic.Bool)
+	uncompressedSize := new(atomic.Int64)
 	go func() {
-		r, err := opts.compression.Reader(io.TeeReader(io.MultiReader(append(rs, tocAndFooter)...), pw))
+		var size int64
+		var decompressFunc func(io.Reader) (io.ReadCloser, error)
+		if _, ok := opts.compression.(*gzipCompression); ok && opts.gzipHelperFunc != nil {
+			decompressFunc = opts.gzipHelperFunc
+		} else {
+			decompressFunc = opts.compression.Reader
+		}
+		decompressR, err := decompressFunc(io.TeeReader(io.MultiReader(append(rs, tocAndFooter)...), pw))
 		if err != nil {
 			pw.CloseWithError(err)
 			return
 		}
-		defer r.Close()
-		if _, err := io.Copy(diffID.Hash(), r); err != nil {
+		defer decompressR.Close()
+		if size, err = io.Copy(diffID.Hash(), decompressR); err != nil {
 			pw.CloseWithError(err)
 			return
 		}
+		uncompressedSize.Store(size)
+		readCompleted.Store(true)
 		pw.Close()
 	}()
 	return &Blob{
@@ -242,8 +312,10 @@ func Build(tarBlob *io.SectionReader, opt ...Option) (_ *Blob, rErr error) {
 			Reader:    pr,
 			closeFunc: layerFiles.CleanupAll,
 		},
-		tocDigest: tocDgst,
-		diffID:    diffID,
+		tocDigest:        tocDgst,
+		diffID:           diffID,
+		readCompleted:    readCompleted,
+		uncompressedSize: uncompressedSize,
 	}, nil
 }
 
@@ -252,7 +324,7 @@ func Build(tarBlob *io.SectionReader, opt ...Option) (_ *Blob, rErr error) {
 // Writers doesn't write TOC and footer to the underlying writers so they can be
 // combined into a single eStargz and tocAndFooter returned by this function can
 // be appended at the tail of that combined blob.
-func closeWithCombine(compressionLevel int, ws ...*Writer) (tocAndFooterR io.Reader, tocDgst digest.Digest, err error) {
+func closeWithCombine(ws ...*Writer) (tocAndFooterR io.Reader, tocDgst digest.Digest, err error) {
 	if len(ws) == 0 {
 		return nil, "", fmt.Errorf("at least one writer must be passed")
 	}
@@ -338,8 +410,9 @@ func sortEntries(in io.ReaderAt, prioritized []string, missedPrioritized *[]stri
 
 	// Sort the tar file respecting to the prioritized files list.
 	sorted := &tarFile{}
+	picked := make(map[string]struct{})
 	for _, l := range prioritized {
-		if err := moveRec(l, intar, sorted); err != nil {
+		if err := moveRec(l, intar, sorted, picked); err != nil {
 			if errors.Is(err, errNotFound) && missedPrioritized != nil {
 				*missedPrioritized = append(*missedPrioritized, l)
 				continue // allow not found
@@ -367,8 +440,8 @@ func sortEntries(in io.ReaderAt, prioritized []string, missedPrioritized *[]stri
 		})
 	}
 
-	// Dump all entry and concatinate them.
-	return append(sorted.dump(), intar.dump()...), nil
+	// Dump prioritized entries followed by the rest entries while skipping picked ones.
+	return append(sorted.dump(nil), intar.dump(picked)...), nil
 }
 
 // readerFromEntries returns a reader of tar archive that contains entries passed
@@ -380,11 +453,11 @@ func readerFromEntries(entries ...*entry) io.Reader {
 		defer tw.Close()
 		for _, entry := range entries {
 			if err := tw.WriteHeader(entry.header); err != nil {
-				pw.CloseWithError(fmt.Errorf("Failed to write tar header: %v", err))
+				pw.CloseWithError(fmt.Errorf("failed to write tar header: %v", err))
 				return
 			}
 			if _, err := io.Copy(tw, entry.payload); err != nil {
-				pw.CloseWithError(fmt.Errorf("Failed to write tar payload: %v", err))
+				pw.CloseWithError(fmt.Errorf("failed to write tar payload: %v", err))
 				return
 			}
 		}
@@ -395,7 +468,7 @@ func readerFromEntries(entries ...*entry) io.Reader {
 
 func importTar(in io.ReaderAt) (*tarFile, error) {
 	tf := &tarFile{}
-	pw, err := newCountReader(in)
+	pw, err := newCountReadSeeker(in)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make position watcher: %w", err)
 	}
@@ -408,9 +481,8 @@ func importTar(in io.ReaderAt) (*tarFile, error) {
 		if err != nil {
 			if err == io.EOF {
 				break
-			} else {
-				return nil, fmt.Errorf("failed to parse tar file, %w", err)
 			}
+			return nil, fmt.Errorf("failed to parse tar file, %w", err)
 		}
 		switch cleanEntryName(h.Name) {
 		case PrefetchLandmark, NoPrefetchLandmark:
@@ -431,36 +503,42 @@ func importTar(in io.ReaderAt) (*tarFile, error) {
 	return tf, nil
 }
 
-func moveRec(name string, in *tarFile, out *tarFile) error {
+func moveRec(name string, in *tarFile, out *tarFile, picked map[string]struct{}) error {
 	name = cleanEntryName(name)
 	if name == "" { // root directory. stop recursion.
 		if e, ok := in.get(name); ok {
 			// entry of the root directory exists. we should move it as well.
 			// this case will occur if tar entries are prefixed with "./", "/", etc.
-			out.add(e)
-			in.remove(name)
+			if _, done := picked[name]; !done {
+				out.add(e)
+				picked[name] = struct{}{}
+			}
 		}
 		return nil
 	}
 
 	_, okIn := in.get(name)
 	_, okOut := out.get(name)
-	if !okIn && !okOut {
+	_, okPicked := picked[name]
+	if !okIn && !okOut && !okPicked {
 		return fmt.Errorf("file: %q: %w", name, errNotFound)
 	}
 
 	parent, _ := path.Split(strings.TrimSuffix(name, "/"))
-	if err := moveRec(parent, in, out); err != nil {
+	if err := moveRec(parent, in, out, picked); err != nil {
 		return err
 	}
 	if e, ok := in.get(name); ok && e.header.Typeflag == tar.TypeLink {
-		if err := moveRec(e.header.Linkname, in, out); err != nil {
+		if err := moveRec(e.header.Linkname, in, out, picked); err != nil {
 			return err
 		}
 	}
+	if _, done := picked[name]; done {
+		return nil
+	}
 	if e, ok := in.get(name); ok {
 		out.add(e)
-		in.remove(name)
+		picked[name] = struct{}{}
 	}
 	return nil
 }
@@ -506,8 +584,18 @@ func (f *tarFile) get(name string) (e *entry, ok bool) {
 	return
 }
 
-func (f *tarFile) dump() []*entry {
-	return f.stream
+func (f *tarFile) dump(skip map[string]struct{}) []*entry {
+	if len(skip) == 0 {
+		return f.stream
+	}
+	var out []*entry
+	for _, e := range f.stream {
+		if _, ok := skip[cleanEntryName(e.header.Name)]; ok {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 type readCloser struct {
@@ -571,19 +659,19 @@ func (tf *tempFiles) cleanupAll() error {
 	return errorutil.Aggregate(allErr)
 }
 
-func newCountReader(r io.ReaderAt) (*countReader, error) {
+func newCountReadSeeker(r io.ReaderAt) (*countReadSeeker, error) {
 	pos := int64(0)
-	return &countReader{r: r, cPos: &pos}, nil
+	return &countReadSeeker{r: r, cPos: &pos}, nil
 }
 
-type countReader struct {
+type countReadSeeker struct {
 	r    io.ReaderAt
 	cPos *int64
 
 	mu sync.Mutex
 }
 
-func (cr *countReader) Read(p []byte) (int, error) {
+func (cr *countReadSeeker) Read(p []byte) (int, error) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
@@ -594,18 +682,18 @@ func (cr *countReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (cr *countReader) Seek(offset int64, whence int) (int64, error) {
+func (cr *countReadSeeker) Seek(offset int64, whence int) (int64, error) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
 	switch whence {
 	default:
-		return 0, fmt.Errorf("Unknown whence: %v", whence)
+		return 0, fmt.Errorf("unknown whence: %v", whence)
 	case io.SeekStart:
 	case io.SeekCurrent:
 		offset += *cr.cPos
 	case io.SeekEnd:
-		return 0, fmt.Errorf("Unsupported whence: %v", whence)
+		return 0, fmt.Errorf("unsupported whence: %v", whence)
 	}
 
 	if offset < 0 {
@@ -615,14 +703,14 @@ func (cr *countReader) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
-func (cr *countReader) currentPos() int64 {
+func (cr *countReadSeeker) currentPos() int64 {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
 	return *cr.cPos
 }
 
-func decompressBlob(org *io.SectionReader, tmp *tempFiles) (*io.SectionReader, error) {
+func decompressBlob(org *io.SectionReader, tmp *tempFiles, gzipHelperFunc GzipHelperFunc) (*io.SectionReader, error) {
 	if org.Size() < 4 {
 		return org, nil
 	}
@@ -633,7 +721,13 @@ func decompressBlob(org *io.SectionReader, tmp *tempFiles) (*io.SectionReader, e
 	var dR io.Reader
 	if bytes.Equal([]byte{0x1F, 0x8B, 0x08}, src[:3]) {
 		// gzip
-		dgR, err := gzip.NewReader(io.NewSectionReader(org, 0, org.Size()))
+		var dgR io.ReadCloser
+		var err error
+		if gzipHelperFunc != nil {
+			dgR, err = gzipHelperFunc(io.NewSectionReader(org, 0, org.Size()))
+		} else {
+			dgR, err = gzip.NewReader(io.NewSectionReader(org, 0, org.Size()))
+		}
 		if err != nil {
 			return nil, err
 		}

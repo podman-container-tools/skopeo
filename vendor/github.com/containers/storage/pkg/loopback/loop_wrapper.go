@@ -1,20 +1,10 @@
-// +build linux,cgo
+//go:build linux
 
 package loopback
 
-/*
-#include <linux/loop.h> // FIXME: present only for defines, maybe we can remove it?
-
-#ifndef LOOP_CTL_GET_FREE
-  #define LOOP_CTL_GET_FREE 0x4C82
-#endif
-
-#ifndef LO_FLAGS_PARTSCAN
-  #define LO_FLAGS_PARTSCAN 8
-#endif
-
-*/
-import "C"
+import (
+	"golang.org/x/sys/unix"
+)
 
 type loopInfo64 struct {
 	loDevice         uint64 /* ioctl r/o */
@@ -34,19 +24,19 @@ type loopInfo64 struct {
 
 // IOCTL consts
 const (
-	LoopSetFd       = C.LOOP_SET_FD
-	LoopCtlGetFree  = C.LOOP_CTL_GET_FREE
-	LoopGetStatus64 = C.LOOP_GET_STATUS64
-	LoopSetStatus64 = C.LOOP_SET_STATUS64
-	LoopClrFd       = C.LOOP_CLR_FD
-	LoopSetCapacity = C.LOOP_SET_CAPACITY
+	LoopSetFd       = unix.LOOP_SET_FD
+	LoopCtlGetFree  = unix.LOOP_CTL_GET_FREE
+	LoopGetStatus64 = unix.LOOP_GET_STATUS64
+	LoopSetStatus64 = unix.LOOP_SET_STATUS64
+	LoopClrFd       = unix.LOOP_CLR_FD
+	LoopSetCapacity = unix.LOOP_SET_CAPACITY
 )
 
 // LOOP consts.
 const (
-	LoFlagsAutoClear = C.LO_FLAGS_AUTOCLEAR
-	LoFlagsReadOnly  = C.LO_FLAGS_READ_ONLY
-	LoFlagsPartScan  = C.LO_FLAGS_PARTSCAN
-	LoKeySize        = C.LO_KEY_SIZE
-	LoNameSize       = C.LO_NAME_SIZE
+	LoFlagsAutoClear = unix.LO_FLAGS_AUTOCLEAR
+	LoFlagsReadOnly  = unix.LO_FLAGS_READ_ONLY
+	LoFlagsPartScan  = unix.LO_FLAGS_PARTSCAN
+	LoKeySize        = unix.LO_KEY_SIZE
+	LoNameSize       = unix.LO_NAME_SIZE
 )

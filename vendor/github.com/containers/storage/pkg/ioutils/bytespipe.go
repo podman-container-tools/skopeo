@@ -93,10 +93,7 @@ loop0:
 		}
 
 		// add new byte slice to the buffers slice and continue writing
-		nextCap := b.Cap() * 2
-		if nextCap > maxCap {
-			nextCap = maxCap
-		}
+		nextCap := min(b.Cap()*2, maxCap)
 		bp.buf = append(bp.buf, getBuffer(nextCap))
 	}
 	bp.wait.Broadcast()
@@ -178,7 +175,7 @@ func getBuffer(size int) *fixedBuffer {
 	bufPoolsLock.Lock()
 	pool, ok := bufPools[size]
 	if !ok {
-		pool = &sync.Pool{New: func() interface{} { return &fixedBuffer{buf: make([]byte, 0, size)} }}
+		pool = &sync.Pool{New: func() any { return &fixedBuffer{buf: make([]byte, 0, size)} }}
 		bufPools[size] = pool
 	}
 	bufPoolsLock.Unlock()

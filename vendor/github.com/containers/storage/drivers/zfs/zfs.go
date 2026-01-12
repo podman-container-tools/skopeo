@@ -1,5 +1,4 @@
 //go:build linux || freebsd
-// +build linux freebsd
 
 package zfs
 
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	graphdriver "github.com/containers/storage/drivers"
+	"github.com/containers/storage/internal/tempdir"
 	"github.com/containers/storage/pkg/directory"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/mount"
@@ -30,10 +30,10 @@ type zfsOptions struct {
 	mountOptions string
 }
 
-const defaultPerms = os.FileMode(0555)
+const defaultPerms = os.FileMode(0o555)
 
 func init() {
-	graphdriver.Register("zfs", Init)
+	graphdriver.MustRegister("zfs", Init)
 }
 
 // Logger returns a zfs logger implementation.
@@ -57,12 +57,12 @@ func Init(base string, opt graphdriver.Options) (graphdriver.Driver, error) {
 		return nil, fmt.Errorf("the 'zfs' command is not available: %w", graphdriver.ErrPrerequisites)
 	}
 
-	file, err := os.OpenFile("/dev/zfs", os.O_RDWR, 0600)
+	file, err := unix.Open("/dev/zfs", unix.O_RDWR, 0o600)
 	if err != nil {
 		logger.Debugf("cannot open /dev/zfs: %v", err)
 		return nil, fmt.Errorf("could not open /dev/zfs: %v: %w", err, graphdriver.ErrPrerequisites)
 	}
-	defer file.Close()
+	defer unix.Close(file)
 
 	options, err := parseOptions(opt.DriverOptions)
 	if err != nil {
@@ -106,11 +106,7 @@ func Init(base string, opt graphdriver.Options) (graphdriver.Driver, error) {
 		return nil, fmt.Errorf("zfs get all -t filesystem -rHp '%s' should contain '%s'", options.fsName, options.fsName)
 	}
 
-	rootUID, rootGID, err := idtools.GetRootUIDGID(opt.UIDMaps, opt.GIDMaps)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get root uid/gid: %w", err)
-	}
-	if err := idtools.MkdirAllAs(base, 0700, rootUID, rootGID); err != nil {
+	if err := os.MkdirAll(base, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create '%s': %w", base, err)
 	}
 
@@ -118,8 +114,6 @@ func Init(base string, opt graphdriver.Options) (graphdriver.Driver, error) {
 		dataset:          rootDataset,
 		options:          options,
 		filesystemsCache: filesystemsCache,
-		uidMaps:          opt.UIDMaps,
-		gidMaps:          opt.GIDMaps,
 		ctr:              graphdriver.NewRefCounter(graphdriver.NewDefaultChecker()),
 	}
 	return graphdriver.NewNaiveDiffDriver(d, graphdriver.NewNaiveLayerIDMapUpdater(d)), nil
@@ -177,8 +171,6 @@ type Driver struct {
 	options          zfsOptions
 	sync.Mutex       // protects filesystem cache against concurrent access
 	filesystemsCache map[string]bool
-	uidMaps          []idtools.IDMap
-	gidMaps          []idtools.IDMap
 	ctr              *graphdriver.RefCounter
 }
 
@@ -248,7 +240,9 @@ func (d *Driver) cloneFilesystem(name, parentName string) error {
 	}
 
 	if err != nil {
-		snapshot.Destroy(zfs.DestroyDeferDeletion)
+		if err1 := snapshot.Destroy(zfs.DestroyDeferDeletion); err1 != nil {
+			logrus.Warnf("Destroy zfs.DestroyDeferDeletion: %v", err1)
+		}
 		return err
 	}
 	return snapshot.Destroy(zfs.DestroyDeferDeletion)
@@ -399,17 +393,28 @@ func (d *Driver) Remove(id string) error {
 	name := d.zfsPath(id)
 	dataset := zfs.Dataset{Name: name}
 	err := dataset.Destroy(zfs.DestroyRecursive)
-	if err == nil {
-		d.Lock()
-		delete(d.filesystemsCache, name)
-		d.Unlock()
+	if err != nil {
+		// We must be tolerant in case the image has already been removed,
+		// for example, accidentally by hand.
+		if _, err1 := zfs.GetDataset(name); err1 == nil {
+			return err
+		}
+		logrus.WithField("storage-driver", "zfs").Debugf("Layer %s has already been removed; ignore it and continue to delete the cache", id)
 	}
-	return err
+	d.Lock()
+	delete(d.filesystemsCache, name)
+	d.Unlock()
+	return nil
+}
+
+// DeferredRemove is not implemented.
+// It calls Remove directly.
+func (d *Driver) DeferredRemove(id string) (tempdir.CleanupTempDirFunc, error) {
+	return nil, d.Remove(id)
 }
 
 // Get returns the mountpoint for the given id after creating the target directories if necessary.
 func (d *Driver) Get(id string, options graphdriver.MountOpts) (_ string, retErr error) {
-
 	mountpoint := d.mountPath(id)
 	if count := d.ctr.Increment(mountpoint); count > 1 {
 		return mountpoint, nil
@@ -449,12 +454,8 @@ func (d *Driver) Get(id string, options graphdriver.MountOpts) (_ string, retErr
 	opts := label.FormatMountLabel(mountOptions, options.MountLabel)
 	logrus.WithField("storage-driver", "zfs").Debugf(`mount("%s", "%s", "%s")`, filesystem, mountpoint, opts)
 
-	rootUID, rootGID, err := idtools.GetRootUIDGID(d.uidMaps, d.gidMaps)
-	if err != nil {
-		return "", err
-	}
 	// Create the target directories if they don't exist
-	if err := idtools.MkdirAllAs(mountpoint, 0755, rootUID, rootGID); err != nil {
+	if err := os.MkdirAll(mountpoint, 0o755); err != nil {
 		return "", err
 	}
 
@@ -506,7 +507,24 @@ func (d *Driver) Exists(id string) bool {
 	return d.filesystemsCache[d.zfsPath(id)]
 }
 
+// List layers (not including additional image stores).  Our layers aren't all
+// dependent on a single well-known dataset, so we can't reliably tell which
+// datasets are ours and which ones just look like they could be ours.
+func (d *Driver) ListLayers() ([]string, error) {
+	return nil, graphdriver.ErrNotSupported
+}
+
 // AdditionalImageStores returns additional image stores supported by the driver
 func (d *Driver) AdditionalImageStores() []string {
 	return nil
+}
+
+// Dedup performs deduplication of the driver's storage.
+func (d *Driver) Dedup(req graphdriver.DedupArgs) (graphdriver.DedupResult, error) {
+	return graphdriver.DedupResult{}, nil
+}
+
+// GetTempDirRootDirs is not implemented.
+func (d *Driver) GetTempDirRootDirs() []string {
+	return []string{}
 }

@@ -5,72 +5,6 @@ import (
 	"os"
 )
 
-// ThinpoolOptionsConfig represents the "storage.options.thinpool"
-// TOML config table.
-type ThinpoolOptionsConfig struct {
-	// AutoExtendPercent determines the amount by which pool needs to be
-	// grown. This is specified in terms of % of pool size. So a value of
-	// 20 means that when threshold is hit, pool will be grown by 20% of
-	// existing pool size.
-	AutoExtendPercent string `toml:"autoextend_percent,omitempty"`
-
-	// AutoExtendThreshold determines the pool extension threshold in terms
-	// of percentage of pool size. For example, if threshold is 60, that
-	// means when pool is 60% full, threshold has been hit.
-	AutoExtendThreshold string `toml:"autoextend_threshold,omitempty"`
-
-	// BaseSize specifies the size to use when creating the base device,
-	// which limits the size of images and containers.
-	BaseSize string `toml:"basesize,omitempty"`
-
-	// BlockSize specifies a custom blocksize to use for the thin pool.
-	BlockSize string `toml:"blocksize,omitempty"`
-
-	// DirectLvmDevice specifies a custom block storage device to use for
-	// the thin pool.
-	DirectLvmDevice string `toml:"directlvm_device,omitempty"`
-
-	// DirectLvmDeviceForcewipes device even if device already has a
-	// filesystem
-	DirectLvmDeviceForce string `toml:"directlvm_device_force,omitempty"`
-
-	// Fs specifies the filesystem type to use for the base device.
-	Fs string `toml:"fs,omitempty"`
-
-	// log_level sets the log level of devicemapper.
-	LogLevel string `toml:"log_level,omitempty"`
-
-	// MetadataSize specifies the size of the metadata for the thinpool
-	// It will be used with the `pvcreate --metadata` option.
-	MetadataSize string `toml:"metadatasize,omitempty"`
-
-	// MinFreeSpace specifies the min free space percent in a thin pool
-	// require for new device creation to
-	MinFreeSpace string `toml:"min_free_space,omitempty"`
-
-	// MkfsArg specifies extra mkfs arguments to be used when creating the
-	// basedevice.
-	MkfsArg string `toml:"mkfsarg,omitempty"`
-
-	// MountOpt specifies extra mount options used when mounting the thin
-	// devices.
-	MountOpt string `toml:"mountopt,omitempty"`
-
-	// Size
-	Size string `toml:"size,omitempty"`
-
-	// UseDeferredDeletion marks device for deferred deletion
-	UseDeferredDeletion string `toml:"use_deferred_deletion,omitempty"`
-
-	// UseDeferredRemoval marks device for deferred removal
-	UseDeferredRemoval string `toml:"use_deferred_removal,omitempty"`
-
-	// XfsNoSpaceMaxRetriesFreeSpace specifies the maximum number of
-	// retries XFS should attempt to complete IO when ENOSPC (no space)
-	// error is returned by underlying storage device.
-	XfsNoSpaceMaxRetries string `toml:"xfs_nospace_max_retries,omitempty"`
-}
-
 type AufsOptionsConfig struct {
 	// MountOpt specifies extra mount options used when mounting
 	MountOpt string `toml:"mountopt,omitempty"`
@@ -97,6 +31,8 @@ type OverlayOptionsConfig struct {
 	Inodes string `toml:"inodes,omitempty"`
 	// Do not create a bind mount on the storage home
 	SkipMountHome string `toml:"skip_mount_home,omitempty"`
+	// Specify whether composefs must be used to mount the data layers
+	UseComposefs string `toml:"use_composefs,omitempty"`
 	// ForceMask indicates the permissions mask (e.g. "0755") to use for new
 	// files and directories
 	ForceMask string `toml:"force_mask,omitempty"`
@@ -124,6 +60,11 @@ type OptionsConfig struct {
 	// for shared image content
 	AdditionalImageStores []string `toml:"additionalimagestores,omitempty"`
 
+	// ImageStore is the location of image store which is separated from the
+	// container store. Usually this is not recommended unless users wants
+	// separate store for image and containers.
+	ImageStore string `toml:"imagestore,omitempty"`
+
 	// AdditionalLayerStores is the location of additional read/only
 	// Layer stores.  Usually used to access Networked File System
 	// for shared image content
@@ -134,24 +75,16 @@ type OptionsConfig struct {
 	// Size
 	Size string `toml:"size,omitempty"`
 
-	// RemapUIDs is a list of default UID mappings to use for layers.
-	RemapUIDs string `toml:"remap-uids,omitempty"`
-	// RemapGIDs is a list of default GID mappings to use for layers.
-	RemapGIDs string `toml:"remap-gids,omitempty"`
 	// IgnoreChownErrors is a flag for whether chown errors should be
 	// ignored when building an image.
 	IgnoreChownErrors string `toml:"ignore_chown_errors,omitempty"`
 
+	// Specify whether composefs must be used to mount the data layers
+	UseComposefs string `toml:"use_composefs,omitempty"`
+
 	// ForceMask indicates the permissions mask (e.g. "0755") to use for new
 	// files and directories.
 	ForceMask os.FileMode `toml:"force_mask,omitempty"`
-
-	// RemapUser is the name of one or more entries in /etc/subuid which
-	// should be used to set up default UID mappings.
-	RemapUser string `toml:"remap-user,omitempty"`
-	// RemapGroup is the name of one or more entries in /etc/subgid which
-	// should be used to set up default GID mappings.
-	RemapGroup string `toml:"remap-group,omitempty"`
 
 	// RootAutoUsernsUser is the name of one or more entries in /etc/subuid and
 	// /etc/subgid which should be used to set up automatically a userns.
@@ -171,8 +104,8 @@ type OptionsConfig struct {
 	// Btrfs container options to be handed to btrfs drivers
 	Btrfs struct{ BtrfsOptionsConfig } `toml:"btrfs,omitempty"`
 
-	// Thinpool container options to be handed to thinpool drivers
-	Thinpool struct{ ThinpoolOptionsConfig } `toml:"thinpool,omitempty"`
+	// Thinpool container options to be handed to thinpool drivers (NOP)
+	Thinpool struct{} `toml:"thinpool,omitempty"`
 
 	// Overlay container options to be handed to overlay drivers
 	Overlay struct{ OverlayOptionsConfig } `toml:"overlay,omitempty"`
@@ -221,63 +154,8 @@ func GetGraphDriverOptions(driverName string, options OptionsConfig) []string {
 			doptions = append(doptions, fmt.Sprintf("%s.size=%s", driverName, options.Size))
 		}
 
-	case "devicemapper":
-		if options.Thinpool.AutoExtendPercent != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.thinp_autoextend_percent=%s", options.Thinpool.AutoExtendPercent))
-		}
-		if options.Thinpool.AutoExtendThreshold != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.thinp_autoextend_threshold=%s", options.Thinpool.AutoExtendThreshold))
-		}
-		if options.Thinpool.BaseSize != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.basesize=%s", options.Thinpool.BaseSize))
-		}
-		if options.Thinpool.BlockSize != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.blocksize=%s", options.Thinpool.BlockSize))
-		}
-		if options.Thinpool.DirectLvmDevice != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.directlvm_device=%s", options.Thinpool.DirectLvmDevice))
-		}
-		if options.Thinpool.DirectLvmDeviceForce != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.directlvm_device_force=%s", options.Thinpool.DirectLvmDeviceForce))
-		}
-		if options.Thinpool.Fs != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.fs=%s", options.Thinpool.Fs))
-		}
-		if options.Thinpool.LogLevel != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.libdm_log_level=%s", options.Thinpool.LogLevel))
-		}
-		if options.Thinpool.MetadataSize != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.metadata_size=%s", options.Thinpool.MetadataSize))
-		}
-		if options.Thinpool.MinFreeSpace != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.min_free_space=%s", options.Thinpool.MinFreeSpace))
-		}
-		if options.Thinpool.MkfsArg != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.mkfsarg=%s", options.Thinpool.MkfsArg))
-		}
-		if options.Thinpool.MountOpt != "" {
-			doptions = append(doptions, fmt.Sprintf("%s.mountopt=%s", driverName, options.Thinpool.MountOpt))
-		} else if options.MountOpt != "" {
-			doptions = append(doptions, fmt.Sprintf("%s.mountopt=%s", driverName, options.MountOpt))
-		}
-
-		if options.Thinpool.Size != "" {
-			doptions = append(doptions, fmt.Sprintf("%s.size=%s", driverName, options.Thinpool.Size))
-		} else if options.Size != "" {
-			doptions = append(doptions, fmt.Sprintf("%s.size=%s", driverName, options.Size))
-		}
-
-		if options.Thinpool.UseDeferredDeletion != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.use_deferred_deletion=%s", options.Thinpool.UseDeferredDeletion))
-		}
-		if options.Thinpool.UseDeferredRemoval != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.use_deferred_removal=%s", options.Thinpool.UseDeferredRemoval))
-		}
-		if options.Thinpool.XfsNoSpaceMaxRetries != "" {
-			doptions = append(doptions, fmt.Sprintf("dm.xfs_nospace_max_retries=%s", options.Thinpool.XfsNoSpaceMaxRetries))
-		}
-
 	case "overlay", "overlay2":
+		// Specify whether composefs must be used to mount the data layers
 		if options.Overlay.IgnoreChownErrors != "" {
 			doptions = append(doptions, fmt.Sprintf("%s.ignore_chown_errors=%s", driverName, options.Overlay.IgnoreChownErrors))
 		} else if options.IgnoreChownErrors != "" {
@@ -310,6 +188,9 @@ func GetGraphDriverOptions(driverName string, options OptionsConfig) []string {
 			doptions = append(doptions, fmt.Sprintf("%s.force_mask=%s", driverName, options.Overlay.ForceMask))
 		} else if options.ForceMask != 0 {
 			doptions = append(doptions, fmt.Sprintf("%s.force_mask=%s", driverName, options.ForceMask))
+		}
+		if options.Overlay.UseComposefs != "" {
+			doptions = append(doptions, fmt.Sprintf("%s.use_composefs=%s", driverName, options.Overlay.UseComposefs))
 		}
 	case "vfs":
 		if options.Vfs.IgnoreChownErrors != "" {

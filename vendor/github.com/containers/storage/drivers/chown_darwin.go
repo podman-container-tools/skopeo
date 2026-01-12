@@ -1,5 +1,4 @@
 //go:build darwin
-// +build darwin
 
 package graphdriver
 
@@ -83,8 +82,8 @@ func (c *platformChowner) LChown(path string, info os.FileInfo, toHost, toContai
 		uid, gid = mappedPair.UID, mappedPair.GID
 	}
 	if uid != int(st.Uid) || gid != int(st.Gid) {
-		cap, err := system.Lgetxattr(path, "security.capability")
-		if err != nil && !errors.Is(err, system.EOPNOTSUPP) && err != system.ErrNotSupportedPlatform {
+		capability, err := system.Lgetxattr(path, "security.capability")
+		if err != nil && !errors.Is(err, system.ENOTSUP) && err != system.ErrNotSupportedPlatform {
 			return fmt.Errorf("%s: %w", os.Args[0], err)
 		}
 
@@ -98,8 +97,8 @@ func (c *platformChowner) LChown(path string, info os.FileInfo, toHost, toContai
 				return fmt.Errorf("%s: %w", os.Args[0], err)
 			}
 		}
-		if cap != nil {
-			if err := system.Lsetxattr(path, "security.capability", cap, 0); err != nil {
+		if capability != nil {
+			if err := system.Lsetxattr(path, "security.capability", capability, 0); err != nil {
 				return fmt.Errorf("%s: %w", os.Args[0], err)
 			}
 		}

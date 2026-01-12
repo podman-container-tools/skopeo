@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 /*
 
@@ -30,7 +29,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -38,9 +36,11 @@ import (
 	"time"
 
 	graphdriver "github.com/containers/storage/drivers"
+	"github.com/containers/storage/internal/tempdir"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/chrootarchive"
 	"github.com/containers/storage/pkg/directory"
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/locker"
 	mountpk "github.com/containers/storage/pkg/mount"
@@ -64,18 +64,16 @@ var (
 	enableDirperm     bool
 )
 
-const defaultPerms = os.FileMode(0555)
+const defaultPerms = os.FileMode(0o555)
 
 func init() {
-	graphdriver.Register("aufs", Init)
+	graphdriver.MustRegister("aufs", Init)
 }
 
 // Driver contains information about the filesystem mounted.
 type Driver struct {
 	sync.Mutex
 	root          string
-	uidMaps       []idtools.IDMap
-	gidMaps       []idtools.IDMap
 	ctr           *graphdriver.RefCounter
 	pathCacheLock sync.Mutex
 	pathCache     map[string]string
@@ -87,11 +85,9 @@ type Driver struct {
 // Init returns a new AUFS driver.
 // An error is returned if AUFS is not supported.
 func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) {
-
 	// Try to load the aufs kernel module
 	if err := supportsAufs(); err != nil {
 		return nil, fmt.Errorf("kernel does not support aufs: %w", graphdriver.ErrNotSupported)
-
 	}
 
 	fsMagic, err := graphdriver.GetFSMagic(home)
@@ -130,22 +126,16 @@ func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) 
 
 	a := &Driver{
 		root:         home,
-		uidMaps:      options.UIDMaps,
-		gidMaps:      options.GIDMaps,
 		pathCache:    make(map[string]string),
 		ctr:          graphdriver.NewRefCounter(graphdriver.NewFsChecker(graphdriver.FsMagicAufs)),
 		locker:       locker.New(),
 		mountOptions: mountOptions,
 	}
 
-	rootUID, rootGID, err := idtools.GetRootUIDGID(options.UIDMaps, options.GIDMaps)
-	if err != nil {
-		return nil, err
-	}
 	// Create the root aufs driver dir and return
 	// if it already exists
 	// If not populate the dir structure
-	if err := idtools.MkdirAllAs(home, 0700, rootUID, rootGID); err != nil {
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		if os.IsExist(err) {
 			return a, nil
 		}
@@ -158,7 +148,7 @@ func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) 
 
 	// Populate the dir structure
 	for _, p := range paths {
-		if err := idtools.MkdirAllAs(path.Join(home, p), 0700, rootUID, rootGID); err != nil {
+		if err := os.MkdirAll(path.Join(home, p), 0o700); err != nil {
 			return nil, err
 		}
 	}
@@ -192,13 +182,7 @@ func Init(home string, options graphdriver.Options) (graphdriver.Driver, error) 
 }
 
 // Return a nil error if the kernel supports aufs
-// We cannot modprobe because inside dind modprobe fails
-// to run
 func supportsAufs() error {
-	// We can try to modprobe aufs first before looking at
-	// proc/filesystems for when aufs is supported
-	exec.Command("modprobe", "aufs").Run()
-
 	if unshare.IsRootless() {
 		return ErrAufsNested
 	}
@@ -239,16 +223,33 @@ func (a *Driver) Status() [][2]string {
 
 // Metadata not implemented
 func (a *Driver) Metadata(id string) (map[string]string, error) {
-	return nil, nil
+	return nil, nil //nolint: nilnil
 }
 
 // Exists returns true if the given id is registered with
 // this driver
 func (a *Driver) Exists(id string) bool {
-	if _, err := os.Lstat(path.Join(a.rootPath(), "layers", id)); err != nil {
+	if err := fileutils.Lexists(path.Join(a.rootPath(), "layers", id)); err != nil {
 		return false
 	}
 	return true
+}
+
+// ListLayers() returns all of the layers known to the driver.
+func (a *Driver) ListLayers() ([]string, error) {
+	diffsDir := filepath.Join(a.rootPath(), "diff")
+	entries, err := os.ReadDir(diffsDir)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		results = append(results, entry.Name())
+	}
+	return results, nil
 }
 
 // AdditionalImageStores returns additional image stores supported by the driver
@@ -273,7 +274,6 @@ func (a *Driver) CreateReadWrite(id, parent string, opts *graphdriver.CreateOpts
 // Create three folders for each id
 // mnt, layers, and diff
 func (a *Driver) Create(id, parent string, opts *graphdriver.CreateOpts) error {
-
 	if opts != nil && len(opts.StorageOpt) != 0 {
 		return fmt.Errorf("--storage-opt is not supported for aufs")
 	}
@@ -319,7 +319,7 @@ func (a *Driver) createDirsFor(id, parent string) error {
 	// The path of directories are <aufs_root_path>/mnt/<image_id>
 	// and <aufs_root_path>/diff/<image_id>
 	for _, p := range paths {
-		rootPair := idtools.NewIDMappingsFromMaps(a.uidMaps, a.gidMaps).RootPair()
+		rootPair := idtools.IDPair{UID: 0, GID: 0}
 		rootPerms := defaultPerms
 		if parent != "" {
 			st, err := system.Stat(path.Join(a.rootPath(), p, parent))
@@ -340,7 +340,9 @@ func (a *Driver) createDirsFor(id, parent string) error {
 // Remove will unmount and remove the given id.
 func (a *Driver) Remove(id string) error {
 	a.locker.Lock(id)
-	defer a.locker.Unlock(id)
+	defer func() {
+		_ = a.locker.Unlock(id)
+	}()
 	a.pathCacheLock.Lock()
 	mountpoint, exists := a.pathCache[id]
 	a.pathCacheLock.Unlock()
@@ -417,7 +419,7 @@ func atomicRemove(source string) error {
 	case err == nil, os.IsNotExist(err):
 	case os.IsExist(err):
 		// Got error saying the target dir already exists, maybe the source doesn't exist due to a previous (failed) remove
-		if _, e := os.Stat(source); !os.IsNotExist(e) {
+		if e := fileutils.Exists(source); !os.IsNotExist(e) {
 			return fmt.Errorf("target rename dir '%s' exists but should not, this needs to be manually cleaned up: %w", target, err)
 		}
 	default:
@@ -431,7 +433,10 @@ func atomicRemove(source string) error {
 // This will mount the dir at its given path
 func (a *Driver) Get(id string, options graphdriver.MountOpts) (string, error) {
 	a.locker.Lock(id)
-	defer a.locker.Unlock(id)
+	defer func() {
+		_ = a.locker.Unlock(id)
+	}()
+
 	parents, err := a.getParentLayerPaths(id)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
@@ -468,7 +473,10 @@ func (a *Driver) Get(id string, options graphdriver.MountOpts) (string, error) {
 // Put unmounts and updates list of active mounts.
 func (a *Driver) Put(id string) error {
 	a.locker.Lock(id)
-	defer a.locker.Unlock(id)
+	defer func() {
+		_ = a.locker.Unlock(id)
+	}()
+
 	a.pathCacheLock.Lock()
 	m, exists := a.pathCache[id]
 	if !exists {
@@ -491,7 +499,9 @@ func (a *Driver) Put(id string) error {
 // For AUFS, it queries the mountpoint for this ID.
 func (a *Driver) ReadWriteDiskUsage(id string) (*directory.DiskUsage, error) {
 	a.locker.Lock(id)
-	defer a.locker.Unlock(id)
+	defer func() {
+		_ = a.locker.Unlock(id)
+	}()
 	a.pathCacheLock.Lock()
 	m, exists := a.pathCache[id]
 	if !exists {
@@ -508,7 +518,7 @@ func (a *Driver) isParent(id, parent string) bool {
 	if parent == "" && len(parents) > 0 {
 		return false
 	}
-	return !(len(parents) > 0 && parent != parents[0])
+	return len(parents) == 0 || parent == parents[0]
 }
 
 // Diff produces an archive of the changes between the specified
@@ -674,7 +684,9 @@ func (a *Driver) Cleanup() error {
 func (a *Driver) aufsMount(ro []string, rw, target string, options graphdriver.MountOpts) (err error) {
 	defer func() {
 		if err != nil {
-			Unmount(target)
+			if err1 := Unmount(target); err1 != nil {
+				logrus.Warnf("Unmount %q: %v", target, err1)
+			}
 		}
 	}()
 
@@ -761,7 +773,23 @@ func (a *Driver) UpdateLayerIDMap(id string, toContainer, toHost *idtools.IDMapp
 	return fmt.Errorf("aufs doesn't support changing ID mappings")
 }
 
-// SupportsShifting tells whether the driver support shifting of the UIDs/GIDs in an userNS
-func (a *Driver) SupportsShifting() bool {
+// SupportsShifting tells whether the driver support shifting of the UIDs/GIDs to the provided mapping in an userNS
+func (a *Driver) SupportsShifting(uidmap, gidmap []idtools.IDMap) bool {
 	return false
+}
+
+// Dedup performs deduplication of the driver's storage.
+func (a *Driver) Dedup(req graphdriver.DedupArgs) (graphdriver.DedupResult, error) {
+	return graphdriver.DedupResult{}, nil
+}
+
+// DeferredRemove is not implemented.
+// It calls Remove directly.
+func (a *Driver) DeferredRemove(id string) (tempdir.CleanupTempDirFunc, error) {
+	return nil, a.Remove(id)
+}
+
+// GetTempDirRootDirs is not implemented.
+func (a *Driver) GetTempDirRootDirs() []string {
+	return []string{}
 }

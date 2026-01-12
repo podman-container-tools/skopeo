@@ -31,11 +31,11 @@ type (
 
 	// Distinct is a unique identifier of a Set.
 	//
-	// Distinct is designed to be ensures equivalence stability: comparisons
-	// will return the save value across versions. For this reason, Distinct
-	// should always be used as a map key instead of a Set.
+	// Distinct is designed to ensure equivalence stability: comparisons will
+	// return the same value across versions. For this reason, Distinct should
+	// always be used as a map key instead of a Set.
 	Distinct struct {
-		iface interface{}
+		iface any
 	}
 
 	// Sortable implements sort.Interface, used for sorting KeyValue.
@@ -70,7 +70,7 @@ func (d Distinct) reflectValue() reflect.Value {
 	return reflect.ValueOf(d.iface)
 }
 
-// Valid returns true if this value refers to a valid Set.
+// Valid reports whether this value refers to a valid Set.
 func (d Distinct) Valid() bool {
 	return d.iface != nil
 }
@@ -120,7 +120,7 @@ func (l *Set) Value(k Key) (Value, bool) {
 	return Value{}, false
 }
 
-// HasValue tests whether a key is defined in this set.
+// HasValue reports whether a key is defined in this set.
 func (l *Set) HasValue(k Key) bool {
 	if l == nil {
 		return false
@@ -155,7 +155,7 @@ func (l *Set) Equivalent() Distinct {
 	return l.equivalent
 }
 
-// Equals returns true if the argument set is equivalent to this set.
+// Equals reports whether the argument set is equivalent to this set.
 func (l *Set) Equals(o *Set) bool {
 	return l.Equivalent() == o.Equivalent()
 }
@@ -344,48 +344,28 @@ func computeDistinct(kvs []KeyValue) Distinct {
 
 // computeDistinctFixed computes a Distinct for small slices. It returns nil
 // if the input is too large for this code path.
-func computeDistinctFixed(kvs []KeyValue) interface{} {
+func computeDistinctFixed(kvs []KeyValue) any {
 	switch len(kvs) {
 	case 1:
-		ptr := new([1]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [1]KeyValue(kvs)
 	case 2:
-		ptr := new([2]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [2]KeyValue(kvs)
 	case 3:
-		ptr := new([3]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [3]KeyValue(kvs)
 	case 4:
-		ptr := new([4]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [4]KeyValue(kvs)
 	case 5:
-		ptr := new([5]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [5]KeyValue(kvs)
 	case 6:
-		ptr := new([6]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [6]KeyValue(kvs)
 	case 7:
-		ptr := new([7]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [7]KeyValue(kvs)
 	case 8:
-		ptr := new([8]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [8]KeyValue(kvs)
 	case 9:
-		ptr := new([9]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [9]KeyValue(kvs)
 	case 10:
-		ptr := new([10]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
+		return [10]KeyValue(kvs)
 	default:
 		return nil
 	}
@@ -393,7 +373,7 @@ func computeDistinctFixed(kvs []KeyValue) interface{} {
 
 // computeDistinctReflect computes a Distinct using reflection, works for any
 // size input.
-func computeDistinctReflect(kvs []KeyValue) interface{} {
+func computeDistinctReflect(kvs []KeyValue) any {
 	at := reflect.New(reflect.ArrayOf(len(kvs), keyValueType)).Elem()
 	for i, keyValue := range kvs {
 		*(at.Index(i).Addr().Interface().(*KeyValue)) = keyValue
@@ -407,7 +387,7 @@ func (l *Set) MarshalJSON() ([]byte, error) {
 }
 
 // MarshalLog is the marshaling function used by the logging system to represent this Set.
-func (l Set) MarshalLog() interface{} {
+func (l Set) MarshalLog() any {
 	kvs := make(map[string]string)
 	for _, kv := range l.ToSlice() {
 		kvs[string(kv.Key)] = kv.Value.Emit()

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -94,7 +95,7 @@ func TarResource(sourceInfo CopyInfo) (content io.ReadCloser, err error) {
 // items in the resulting tar archive to match the given rebaseName if not "".
 func TarResourceRebase(sourcePath, rebaseName string) (content io.ReadCloser, err error) {
 	sourcePath = normalizePath(sourcePath)
-	if _, err = os.Lstat(sourcePath); err != nil {
+	if err = fileutils.Lexists(sourcePath); err != nil {
 		// Catches the case where the source does not exist or is not a
 		// directory if asserted to be a directory, as this also causes an
 		// error.
@@ -297,7 +298,6 @@ func PrepareArchiveCopy(srcContent io.Reader, srcInfo, dstInfo CopyInfo) (dstDir
 		}
 		return dstDir, RebaseArchiveEntries(srcContent, srcBase, dstBase), nil
 	}
-
 }
 
 // RebaseArchiveEntries rewrites the given srcContent archive replacing

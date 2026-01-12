@@ -14,12 +14,14 @@ import (
 
 // decompress4x_main_loop_x86 is an x86 assembler implementation
 // of Decompress4X when tablelog > 8.
+//
 //go:noescape
 func decompress4x_main_loop_amd64(ctx *decompress4xContext)
 
 // decompress4x_8b_loop_x86 is an x86 assembler implementation
 // of Decompress4X when tablelog <= 8 which decodes 4 entries
 // per loop.
+//
 //go:noescape
 func decompress4x_8b_main_loop_amd64(ctx *decompress4xContext)
 
@@ -56,7 +58,7 @@ func (d *Decoder) Decompress4X(dst, src []byte) ([]byte, error) {
 	var br [4]bitReaderShifted
 	// Decode "jump table"
 	start := 6
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		length := int(src[i*2]) | (int(src[i*2+1]) << 8)
 		if start+length >= len(src) {
 			return nil, errors.New("truncated input (or invalid offset)")
@@ -107,10 +109,7 @@ func (d *Decoder) Decompress4X(dst, src []byte) ([]byte, error) {
 	remainBytes := dstEvery - (decoded / 4)
 	for i := range br {
 		offset := dstEvery * i
-		endsAt := offset + remainBytes
-		if endsAt > len(out) {
-			endsAt = len(out)
-		}
+		endsAt := min(offset+remainBytes, len(out))
 		br := &br[i]
 		bitsLeft := br.remaining()
 		for bitsLeft > 0 {
@@ -145,11 +144,13 @@ func (d *Decoder) Decompress4X(dst, src []byte) ([]byte, error) {
 
 // decompress4x_main_loop_x86 is an x86 assembler implementation
 // of Decompress1X when tablelog > 8.
+//
 //go:noescape
 func decompress1x_main_loop_amd64(ctx *decompress1xContext)
 
 // decompress4x_main_loop_x86 is an x86 with BMI2 assembler implementation
 // of Decompress1X when tablelog > 8.
+//
 //go:noescape
 func decompress1x_main_loop_bmi2(ctx *decompress1xContext)
 

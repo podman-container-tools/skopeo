@@ -1,4 +1,4 @@
-// Copyright 2013-2022 The Cobra Authors
+// Copyright 2013-2023 The Cobra Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ func genBashComp(buf io.StringWriter, name string, includeDesc bool) {
 
 __%[1]s_debug()
 {
-    if [[ -n ${BASH_COMP_DEBUG_FILE:-} ]]; then
+    if [[ -n ${BASH_COMP_DEBUG_FILE-} ]]; then
         echo "$*" >> "${BASH_COMP_DEBUG_FILE}"
     fi
 }
@@ -57,7 +57,7 @@ __%[1]s_get_completion_results() {
     local requestComp lastParam lastChar args
 
     # Prepare the command to request completions for the program.
-    # Calling ${words[0]} instead of directly %[1]s allows to handle aliases
+    # Calling ${words[0]} instead of directly %[1]s allows handling aliases
     args=("${words[@]:1}")
     requestComp="${words[0]} %[2]s ${args[*]}"
 
@@ -65,7 +65,7 @@ __%[1]s_get_completion_results() {
     lastChar=${lastParam:$((${#lastParam}-1)):1}
     __%[1]s_debug "lastParam ${lastParam}, lastChar ${lastChar}"
 
-    if [ -z "${cur}" ] && [ "${lastChar}" != "=" ]; then
+    if [[ -z ${cur} && ${lastChar} != = ]]; then
         # If the last parameter is complete (there is a space following it)
         # We add an extra empty parameter so we can indicate this to the go method.
         __%[1]s_debug "Adding extra empty parameter"
@@ -75,7 +75,7 @@ __%[1]s_get_completion_results() {
     # When completing a flag with an = (e.g., %[1]s -n=<TAB>)
     # bash focuses on the part after the =, so we need to remove
     # the flag part from $cur
-    if [[ "${cur}" == -*=* ]]; then
+    if [[ ${cur} == -*=* ]]; then
         cur="${cur#*=}"
     fi
 
@@ -87,7 +87,7 @@ __%[1]s_get_completion_results() {
     directive=${out##*:}
     # Remove the directive
     out=${out%%:*}
-    if [ "${directive}" = "${out}" ]; then
+    if [[ ${directive} == "${out}" ]]; then
         # There is not directive specified
         directive=0
     fi
@@ -101,22 +101,36 @@ __%[1]s_process_completion_results() {
     local shellCompDirectiveNoFileComp=%[5]d
     local shellCompDirectiveFilterFileExt=%[6]d
     local shellCompDirectiveFilterDirs=%[7]d
+    local shellCompDirectiveKeepOrder=%[8]d
 
-    if [ $((directive & shellCompDirectiveError)) -ne 0 ]; then
+    if (((directive & shellCompDirectiveError) != 0)); then
         # Error code.  No completion.
         __%[1]s_debug "Received error from custom completion go code"
         return
     else
-        if [ $((directive & shellCompDirectiveNoSpace)) -ne 0 ]; then
-            if [[ $(type -t compopt) = "builtin" ]]; then
+        if (((directive & shellCompDirectiveNoSpace) != 0)); then
+            if [[ $(type -t compopt) == builtin ]]; then
                 __%[1]s_debug "Activating no space"
                 compopt -o nospace
             else
                 __%[1]s_debug "No space directive not supported in this version of bash"
             fi
         fi
-        if [ $((directive & shellCompDirectiveNoFileComp)) -ne 0 ]; then
-            if [[ $(type -t compopt) = "builtin" ]]; then
+        if (((directive & shellCompDirectiveKeepOrder) != 0)); then
+            if [[ $(type -t compopt) == builtin ]]; then
+                # no sort isn't supported for bash less than < 4.4
+                if [[ ${BASH_VERSINFO[0]} -lt 4 || ( ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -lt 4 ) ]]; then
+                    __%[1]s_debug "No sort directive not supported in this version of bash"
+                else
+                    __%[1]s_debug "Activating keep order"
+                    compopt -o nosort
+                fi
+            else
+                __%[1]s_debug "No sort directive not supported in this version of bash"
+            fi
+        fi
+        if (((directive & shellCompDirectiveNoFileComp) != 0)); then
+            if [[ $(type -t compopt) == builtin ]]; then
                 __%[1]s_debug "Activating no file completion"
                 compopt +o default
             else
@@ -130,9 +144,9 @@ __%[1]s_process_completion_results() {
     local activeHelp=()
     __%[1]s_extract_activeHelp
 
-    if [ $((directive & shellCompDirectiveFilterFileExt)) -ne 0 ]; then
+    if (((directive & shellCompDirectiveFilterFileExt) != 0)); then
         # File extension filtering
-        local fullFilter filter filteringCmd
+        local fullFilter="" filter filteringCmd
 
         # Do not use quotes around the $completions variable or else newline
         # characters will be kept.
@@ -143,13 +157,12 @@ __%[1]s_process_completion_results() {
         filteringCmd="_filedir $fullFilter"
         __%[1]s_debug "File filtering command: $filteringCmd"
         $filteringCmd
-    elif [ $((directive & shellCompDirectiveFilterDirs)) -ne 0 ]; then
+    elif (((directive & shellCompDirectiveFilterDirs) != 0)); then
         # File completion for directories only
 
-        # Use printf to strip any trailing newline
         local subdir
-        subdir=$(printf "%%s" "${completions[0]}")
-        if [ -n "$subdir" ]; then
+        subdir=${completions[0]}
+        if [[ -n $subdir ]]; then
             __%[1]s_debug "Listing directories in $subdir"
             pushd "$subdir" >/dev/null 2>&1 && _filedir -d && popd >/dev/null 2>&1 || return
         else
@@ -164,41 +177,94 @@ __%[1]s_process_completion_results() {
     __%[1]s_handle_special_char "$cur" =
 
     # Print the activeHelp statements before we finish
-    if [ ${#activeHelp[*]} -ne 0 ]; then
-        printf "\n";
-        printf "%%s\n" "${activeHelp[@]}"
-        printf "\n"
+    __%[1]s_handle_activeHelp
+}
 
-        # The prompt format is only available from bash 4.4.
-        # We test if it is available before using it.
-        if (x=${PS1@P}) 2> /dev/null; then
-            printf "%%s" "${PS1@P}${COMP_LINE[@]}"
-        else
-            # Can't print the prompt.  Just print the
-            # text the user had typed, it is workable enough.
-            printf "%%s" "${COMP_LINE[@]}"
+__%[1]s_handle_activeHelp() {
+    # Print the activeHelp statements
+    if ((${#activeHelp[*]} != 0)); then
+        if [ -z $COMP_TYPE ]; then
+            # Bash v3 does not set the COMP_TYPE variable.
+            printf "\n";
+            printf "%%s\n" "${activeHelp[@]}"
+            printf "\n"
+            __%[1]s_reprint_commandLine
+            return
         fi
+
+        # Only print ActiveHelp on the second TAB press
+        if [ $COMP_TYPE -eq 63 ]; then
+            printf "\n"
+            printf "%%s\n" "${activeHelp[@]}"
+
+            if ((${#COMPREPLY[*]} == 0)); then
+                # When there are no completion choices from the program, file completion
+                # may kick in if the program has not disabled it; in such a case, we want
+                # to know if any files will match what the user typed, so that we know if
+                # there will be completions presented, so that we know how to handle ActiveHelp.
+                # To find out, we actually trigger the file completion ourselves;
+                # the call to _filedir will fill COMPREPLY if files match.
+                if (((directive & shellCompDirectiveNoFileComp) == 0)); then
+                    __%[1]s_debug "Listing files"
+                    _filedir
+                fi
+            fi
+
+            if ((${#COMPREPLY[*]} != 0)); then
+                # If there are completion choices to be shown, print a delimiter.
+                # Re-printing the command-line will automatically be done
+                # by the shell when it prints the completion choices.
+                printf -- "--"
+            else
+                # When there are no completion choices at all, we need
+                # to re-print the command-line since the shell will
+                # not be doing it itself.
+                __%[1]s_reprint_commandLine
+            fi
+        elif [ $COMP_TYPE -eq 37 ] || [ $COMP_TYPE -eq 42 ]; then
+            # For completion type: menu-complete/menu-complete-backward and insert-completions
+            # the completions are immediately inserted into the command-line, so we first
+            # print the activeHelp message and reprint the command-line since the shell won't.
+            printf "\n"
+            printf "%%s\n" "${activeHelp[@]}"
+
+            __%[1]s_reprint_commandLine
+        fi
+    fi
+}
+
+__%[1]s_reprint_commandLine() {
+    # The prompt format is only available from bash 4.4.
+    # We test if it is available before using it.
+    if (x=${PS1@P}) 2> /dev/null; then
+        printf "%%s" "${PS1@P}${COMP_LINE[@]}"
+    else
+        # Can't print the prompt.  Just print the
+        # text the user had typed, it is workable enough.
+        printf "%%s" "${COMP_LINE[@]}"
     fi
 }
 
 # Separate activeHelp lines from real completions.
 # Fills the $activeHelp and $completions arrays.
 __%[1]s_extract_activeHelp() {
-    local activeHelpMarker="%[8]s"
+    local activeHelpMarker="%[9]s"
     local endIndex=${#activeHelpMarker}
 
     while IFS='' read -r comp; do
-        if [ "${comp:0:endIndex}" = "$activeHelpMarker" ]; then
+        [[ -z $comp ]] && continue
+
+        if [[ ${comp:0:endIndex} == $activeHelpMarker ]]; then
             comp=${comp:endIndex}
             __%[1]s_debug "ActiveHelp found: $comp"
-            if [ -n "$comp" ]; then
+            if [[ -n $comp ]]; then
                 activeHelp+=("$comp")
             fi
         else
             # Not an activeHelp line but a normal completion
             completions+=("$comp")
         fi
-    done < <(printf "%%s\n" "${out}")
+    done <<<"${out}"
 }
 
 __%[1]s_handle_completion_types() {
@@ -210,16 +276,21 @@ __%[1]s_handle_completion_types() {
         # If the user requested inserting one completion at a time, or all
         # completions at once on the command-line we must remove the descriptions.
         # https://github.com/spf13/cobra/issues/1508
-        local tab=$'\t' comp
-        while IFS='' read -r comp; do
-            [[ -z $comp ]] && continue
-            # Strip any description
-            comp=${comp%%%%$tab*}
-            # Only consider the completions that match
-            if [[ $comp == "$cur"* ]]; then
-                COMPREPLY+=("$comp")
-            fi
-        done < <(printf "%%s\n" "${completions[@]}")
+
+        # If there are no completions, we don't need to do anything
+        (( ${#completions[@]} == 0 )) && return 0
+
+        local tab=$'\t'
+
+        # Strip any description and escape the completion to handled special characters
+        IFS=$'\n' read -ra completions -d '' < <(printf "%%q\n" "${completions[@]%%%%$tab*}")
+
+        # Only consider the completions that match
+        IFS=$'\n' read -ra COMPREPLY -d '' < <(IFS=$'\n'; compgen -W "${completions[*]}" -- "${cur}")
+
+        # compgen looses the escaping so we need to escape all completions again since they will
+        # all be inserted on the command-line.
+        IFS=$'\n' read -ra COMPREPLY -d '' < <(printf "%%q\n" "${COMPREPLY[@]}")
         ;;
 
     *)
@@ -230,11 +301,25 @@ __%[1]s_handle_completion_types() {
 }
 
 __%[1]s_handle_standard_completion_case() {
-    local tab=$'\t' comp
+    local tab=$'\t'
+
+    # If there are no completions, we don't need to do anything
+    (( ${#completions[@]} == 0 )) && return 0
 
     # Short circuit to optimize if we don't have descriptions
     if [[ "${completions[*]}" != *$tab* ]]; then
-        IFS=$'\n' read -ra COMPREPLY -d '' < <(compgen -W "${completions[*]}" -- "$cur")
+        # First, escape the completions to handle special characters
+        IFS=$'\n' read -ra completions -d '' < <(printf "%%q\n" "${completions[@]}")
+        # Only consider the completions that match what the user typed
+        IFS=$'\n' read -ra COMPREPLY -d '' < <(IFS=$'\n'; compgen -W "${completions[*]}" -- "${cur}")
+
+        # compgen looses the escaping so, if there is only a single completion, we need to
+        # escape it again because it will be inserted on the command-line.  If there are multiple
+        # completions, we don't want to escape them because they will be printed in a list
+        # and we don't want to show escape characters in that list.
+        if (( ${#COMPREPLY[@]} == 1 )); then
+            COMPREPLY[0]=$(printf "%%q" "${COMPREPLY[0]}")
+        fi
         return 0
     fi
 
@@ -243,23 +328,39 @@ __%[1]s_handle_standard_completion_case() {
     # Look for the longest completion so that we can format things nicely
     while IFS='' read -r compline; do
         [[ -z $compline ]] && continue
-        # Strip any description before checking the length
-        comp=${compline%%%%$tab*}
+
+        # Before checking if the completion matches what the user typed,
+        # we need to strip any description and escape the completion to handle special
+        # characters because those escape characters are part of what the user typed.
+        # Don't call "printf" in a sub-shell because it will be much slower
+        # since we are in a loop.
+        printf -v comp "%%q" "${compline%%%%$tab*}" &>/dev/null || comp=$(printf "%%q" "${compline%%%%$tab*}")
+
         # Only consider the completions that match
         [[ $comp == "$cur"* ]] || continue
+
+        # The completions matches.  Add it to the list of full completions including
+        # its description.  We don't escape the completion because it may get printed
+        # in a list if there are more than one and we don't want show escape characters
+        # in that list.
         COMPREPLY+=("$compline")
+
+        # Strip any description before checking the length, and again, don't escape
+        # the completion because this length is only used when printing the completions
+        # in a list and we don't want show escape characters in that list.
+        comp=${compline%%%%$tab*}
         if ((${#comp}>longest)); then
             longest=${#comp}
         fi
     done < <(printf "%%s\n" "${completions[@]}")
 
-    # If there is a single completion left, remove the description text
-    if [ ${#COMPREPLY[*]} -eq 1 ]; then
+    # If there is a single completion left, remove the description text and escape any special characters
+    if ((${#COMPREPLY[*]} == 1)); then
         __%[1]s_debug "COMPREPLY[0]: ${COMPREPLY[0]}"
-        comp="${COMPREPLY[0]%%%%$tab*}"
-        __%[1]s_debug "Removed description from single completion, which is now: ${comp}"
-        COMPREPLY[0]=$comp
-    else # Format the descriptions
+        COMPREPLY[0]=$(printf "%%q" "${COMPREPLY[0]%%%%$tab*}")
+        __%[1]s_debug "Removed description from single completion, which is now: ${COMPREPLY[0]}"
+    else
+        # Format the descriptions
         __%[1]s_format_comp_descriptions $longest
     fi
 }
@@ -271,8 +372,8 @@ __%[1]s_handle_special_char()
     if [[ "$comp" == *${char}* && "$COMP_WORDBREAKS" == *${char}* ]]; then
         local word=${comp%%"${comp##*${char}}"}
         local idx=${#COMPREPLY[*]}
-        while [[ $((--idx)) -ge 0 ]]; do
-            COMPREPLY[$idx]=${COMPREPLY[$idx]#"$word"}
+        while ((--idx >= 0)); do
+            COMPREPLY[idx]=${COMPREPLY[idx]#"$word"}
         done
     fi
 }
@@ -298,7 +399,7 @@ __%[1]s_format_comp_descriptions()
 
             # Make sure we can fit a description of at least 8 characters
             # if we are to align the descriptions.
-            if [[ $maxdesclength -gt 8 ]]; then
+            if ((maxdesclength > 8)); then
                 # Add the proper number of spaces to align the descriptions
                 for ((i = ${#comp} ; i < longest ; i++)); do
                     comp+=" "
@@ -310,8 +411,8 @@ __%[1]s_format_comp_descriptions()
 
             # If there is enough space for any description text,
             # truncate the descriptions that are too long for the shell width
-            if [ $maxdesclength -gt 0 ]; then
-                if [ ${#desc} -gt $maxdesclength ]; then
+            if ((maxdesclength > 0)); then
+                if ((${#desc} > maxdesclength)); then
                     desc=${desc:0:$(( maxdesclength - 1 ))}
                     desc+="…"
                 fi
@@ -332,9 +433,9 @@ __start_%[1]s()
     # Call _init_completion from the bash-completion package
     # to prepare the arguments properly
     if declare -F _init_completion >/dev/null 2>&1; then
-        _init_completion -n "=:" || return
+        _init_completion -n =: || return
     else
-        __%[1]s_init_completion -n "=:" || return
+        __%[1]s_init_completion -n =: || return
     fi
 
     __%[1]s_debug
@@ -361,7 +462,7 @@ fi
 # ex: ts=4 sw=4 et filetype=sh
 `, name, compCmd,
 		ShellCompDirectiveError, ShellCompDirectiveNoSpace, ShellCompDirectiveNoFileComp,
-		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs,
+		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs, ShellCompDirectiveKeepOrder,
 		activeHelpMarker))
 }
 

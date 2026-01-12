@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package unshare
 
@@ -21,9 +20,9 @@ import (
 
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/reexec"
+	"github.com/moby/sys/capability"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
-	"github.com/syndtr/gocapability/capability"
 )
 
 // Cmd wraps an exec.Cmd created by the reexec package in unshare(), and
@@ -33,9 +32,9 @@ type Cmd struct {
 	*exec.Cmd
 	UnshareFlags               int
 	UseNewuidmap               bool
-	UidMappings                []specs.LinuxIDMapping // nolint: golint
+	UidMappings                []specs.LinuxIDMapping //nolint: revive
 	UseNewgidmap               bool
-	GidMappings                []specs.LinuxIDMapping // nolint: golint
+	GidMappings                []specs.LinuxIDMapping //nolint: revive
 	GidMappingsEnableSetgroups bool
 	Setsid                     bool
 	Setpgrp                    bool
@@ -99,7 +98,7 @@ func IsSetID(path string, modeid os.FileMode, capid capability.Cap) (bool, error
 	return cap.Get(capability.EFFECTIVE, capid), nil
 }
 
-func (c *Cmd) Start() error {
+func (c *Cmd) Start() (retErr error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -129,7 +128,7 @@ func (c *Cmd) Start() error {
 	if err != nil {
 		pidRead.Close()
 		pidWrite.Close()
-		return fmt.Errorf("creating pid pipe: %w", err)
+		return fmt.Errorf("creating continue read/write pipe: %w", err)
 	}
 	c.Env = append(c.Env, fmt.Sprintf("_Containers-continue-pipe=%d", len(c.ExtraFiles)+3))
 	c.ExtraFiles = append(c.ExtraFiles, continueRead)
@@ -168,6 +167,15 @@ func (c *Cmd) Start() error {
 		return err
 	}
 
+	// If the function fails from here, we need to make sure the
+	// child process is killed and properly cleaned up.
+	defer func() {
+		if retErr != nil {
+			_ = c.Cmd.Process.Kill()
+			_ = c.Cmd.Wait()
+		}
+	}()
+
 	// Close the ends of the pipes that the parent doesn't need.
 	continueRead.Close()
 	continueRead = nil
@@ -175,12 +183,11 @@ func (c *Cmd) Start() error {
 	pidWrite = nil
 
 	// Read the child's PID from the pipe.
-	pidString := ""
 	b := new(bytes.Buffer)
 	if _, err := io.Copy(b, pidRead); err != nil {
 		return fmt.Errorf("reading child PID: %w", err)
 	}
-	pidString = b.String()
+	pidString := b.String()
 	pid, err := strconv.Atoi(pidString)
 	if err != nil {
 		fmt.Fprintf(continueWrite, "error parsing PID %q: %v", pidString, err)
@@ -242,7 +249,7 @@ func (c *Cmd) Start() error {
 				if err != nil {
 					return fmt.Errorf("finding newgidmap: %w", err)
 				}
-				cmd := exec.Command(path, append([]string{pidString}, strings.Fields(strings.Replace(g.String(), "\n", " ", -1))...)...)
+				cmd := exec.Command(path, append([]string{pidString}, strings.Fields(g.String())...)...)
 				g.Reset()
 				cmd.Stdout = g
 				cmd.Stderr = g
@@ -260,7 +267,7 @@ func (c *Cmd) Start() error {
 					}
 					logrus.Warnf("Falling back to single mapping")
 					g.Reset()
-					g.Write([]byte(fmt.Sprintf("0 %d 1\n", os.Getegid())))
+					fmt.Fprintf(g, "0 %d 1\n", os.Getegid())
 				}
 			}
 			if !gidmapSet {
@@ -302,7 +309,7 @@ func (c *Cmd) Start() error {
 				if err != nil {
 					return fmt.Errorf("finding newuidmap: %w", err)
 				}
-				cmd := exec.Command(path, append([]string{pidString}, strings.Fields(strings.Replace(u.String(), "\n", " ", -1))...)...)
+				cmd := exec.Command(path, append([]string{pidString}, strings.Fields(u.String())...)...)
 				u.Reset()
 				cmd.Stdout = u
 				cmd.Stderr = u
@@ -321,7 +328,7 @@ func (c *Cmd) Start() error {
 
 					logrus.Warnf("Falling back to single mapping")
 					u.Reset()
-					u.Write([]byte(fmt.Sprintf("0 %d 1\n", os.Geteuid())))
+					fmt.Fprintf(u, "0 %d 1\n", os.Geteuid())
 				}
 			}
 			if !uidmapSet {
@@ -400,6 +407,12 @@ func hasFullUsersMappings() (bool, error) {
 	return bytes.Contains(content, []byte("4294967295")), nil
 }
 
+var (
+	hasCapSysAdminOnce sync.Once
+	hasCapSysAdminRet  bool
+	hasCapSysAdminErr  error
+)
+
 // IsRootless tells us if we are running in rootless mode
 func IsRootless() bool {
 	isRootlessOnce.Do(func() {
@@ -436,6 +449,16 @@ func GetRootlessUID() int {
 	return os.Getuid()
 }
 
+// GetRootlessGID returns the GID of the user in the parent userNS
+func GetRootlessGID() int {
+	gidEnv := getenv("_CONTAINERS_ROOTLESS_GID")
+	if gidEnv != "" {
+		u, _ := strconv.Atoi(gidEnv)
+		return u
+	}
+	return os.Getgid()
+}
+
 // RootlessEnv returns the environment settings for the rootless containers
 func RootlessEnv() []string {
 	return append(os.Environ(), UsernsEnvName+"=done")
@@ -445,10 +468,21 @@ type Runnable interface {
 	Run() error
 }
 
+func bailOnError(err error, format string, a ...any) { //nolint:revive,goprintffuncname
+	if err != nil {
+		if format != "" {
+			logrus.Errorf("%s: %v", fmt.Sprintf(format, a...), err)
+		} else {
+			logrus.Errorf("%v", err)
+		}
+		os.Exit(1)
+	}
+}
+
 // MaybeReexecUsingUserNamespace re-exec the process in a new namespace
 func MaybeReexecUsingUserNamespace(evenForRoot bool) {
 	// If we've already been through this once, no need to try again.
-	if os.Geteuid() == 0 && IsRootless() {
+	if os.Geteuid() == 0 && GetRootlessUID() > 0 {
 		return
 	}
 
@@ -500,8 +534,11 @@ func MaybeReexecUsingUserNamespace(evenForRoot bool) {
 	} else {
 		// If we have CAP_SYS_ADMIN, then we don't need to create a new namespace in order to be able
 		// to use unshare(), so don't bother creating a new user namespace at this point.
-		capabilities, err := capability.NewPid(0)
+		capabilities, err := capability.NewPid2(0)
+		bailOnError(err, "Initializing a new Capabilities object of pid 0")
+		err = capabilities.Load()
 		bailOnError(err, "Reading the current capabilities sets")
+
 		if capabilities.Get(capability.EFFECTIVE, capability.CAP_SYS_ADMIN) {
 			return
 		}
@@ -561,7 +598,12 @@ func MaybeReexecUsingUserNamespace(evenForRoot bool) {
 	cmd.Hook = func(int) error {
 		go func() {
 			for receivedSignal := range interrupted {
-				cmd.Cmd.Process.Signal(receivedSignal)
+				if err := cmd.Cmd.Process.Signal(receivedSignal); err != nil {
+					logrus.Warnf(
+						"Failed to send a signal '%d' to the Process (PID: %d): %v",
+						receivedSignal, cmd.Cmd.Process.Pid, err,
+					)
+				}
 			}
 		}()
 		return nil

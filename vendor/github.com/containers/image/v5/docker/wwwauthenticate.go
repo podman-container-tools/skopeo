@@ -3,6 +3,8 @@ package docker
 // Based on github.com/docker/distribution/registry/client/auth/authchallenge.go, primarily stripping unnecessary dependencies.
 
 import (
+	"fmt"
+	"iter"
 	"net/http"
 	"strings"
 )
@@ -59,15 +61,29 @@ func init() {
 	}
 }
 
-func parseAuthHeader(header http.Header) []challenge {
-	challenges := []challenge{}
-	for _, h := range header[http.CanonicalHeaderKey("WWW-Authenticate")] {
-		v, p := parseValueAndParams(h)
-		if v != "" {
-			challenges = append(challenges, challenge{Scheme: v, Parameters: p})
+func iterateAuthHeader(header http.Header) iter.Seq[challenge] {
+	return func(yield func(challenge) bool) {
+		for _, h := range header[http.CanonicalHeaderKey("WWW-Authenticate")] {
+			v, p := parseValueAndParams(h)
+			if v != "" {
+				if !yield(challenge{Scheme: v, Parameters: p}) {
+					return
+				}
+			}
 		}
 	}
-	return challenges
+}
+
+// parseAuthScope parses an authentication scope string of the form `$resource:$remote:$actions`
+func parseAuthScope(scopeStr string) (*authScope, error) {
+	if parts := strings.Split(scopeStr, ":"); len(parts) == 3 {
+		return &authScope{
+			resourceType: parts[0],
+			remoteName:   parts[1],
+			actions:      parts[2],
+		}, nil
+	}
+	return nil, fmt.Errorf("error parsing auth scope: '%s'", scopeStr)
 }
 
 // NOTE: This is not a fully compliant parser per RFC 7235:
@@ -136,7 +152,7 @@ func expectTokenOrQuoted(s string) (value string, rest string) {
 			p := make([]byte, len(s)-1)
 			j := copy(p, s[:i])
 			escape := true
-			for i = i + 1; i < len(s); i++ {
+			for i++; i < len(s); i++ {
 				b := s[i]
 				switch {
 				case escape:

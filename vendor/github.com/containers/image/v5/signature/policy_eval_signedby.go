@@ -4,44 +4,44 @@ package signature
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
-	"strings"
+	"slices"
 
+	"github.com/containers/image/v5/internal/multierr"
+	"github.com/containers/image/v5/internal/private"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/types"
 	digest "github.com/opencontainers/go-digest"
-	"github.com/pkg/errors"
 )
 
-func (pr *prSignedBy) isSignatureAuthorAccepted(ctx context.Context, image types.UnparsedImage, sig []byte) (signatureAcceptanceResult, *Signature, error) {
+func (pr *prSignedBy) isSignatureAuthorAccepted(ctx context.Context, image private.UnparsedImage, sig []byte) (signatureAcceptanceResult, *Signature, error) {
 	switch pr.KeyType {
 	case SBKeyTypeGPGKeys:
 	case SBKeyTypeSignedByGPGKeys, SBKeyTypeX509Certificates, SBKeyTypeSignedByX509CAs:
 		// FIXME? Reject this at policy parsing time already?
-		return sarRejected, nil, errors.Errorf(`"Unimplemented "keyType" value "%s"`, string(pr.KeyType))
+		return sarRejected, nil, fmt.Errorf(`Unimplemented "keyType" value %q`, string(pr.KeyType))
 	default:
 		// This should never happen, newPRSignedBy ensures KeyType.IsValid()
-		return sarRejected, nil, errors.Errorf(`"Unknown "keyType" value "%s"`, string(pr.KeyType))
-	}
-
-	if pr.KeyPath != "" && pr.KeyData != nil {
-		return sarRejected, nil, errors.New(`Internal inconsistency: both "keyPath" and "keyData" specified`)
-	}
-	// FIXME: move this to per-context initialization
-	var data []byte
-	if pr.KeyData != nil {
-		data = pr.KeyData
-	} else {
-		d, err := os.ReadFile(pr.KeyPath)
-		if err != nil {
-			return sarRejected, nil, err
-		}
-		data = d
+		return sarRejected, nil, fmt.Errorf(`Unknown "keyType" value %q`, string(pr.KeyType))
 	}
 
 	// FIXME: move this to per-context initialization
-	mech, trustedIdentities, err := NewEphemeralGPGSigningMechanism(data)
+	const notOneSourceErrorText = `Internal inconsistency: not exactly one of "keyPath", "keyPaths" and "keyData" specified`
+	data, err := loadBytesFromConfigSources(configBytesSources{
+		inconsistencyErrorMessage: notOneSourceErrorText,
+		path:                      pr.KeyPath,
+		paths:                     pr.KeyPaths,
+		data:                      pr.KeyData,
+	})
+	if err != nil {
+		return sarRejected, nil, err
+	}
+	if data == nil {
+		return sarRejected, nil, errors.New(notOneSourceErrorText)
+	}
+
+	// FIXME: move this to per-context initialization
+	mech, trustedIdentities, err := newEphemeralGPGSigningMechanism(data)
 	if err != nil {
 		return sarRejected, nil, err
 	}
@@ -52,10 +52,8 @@ func (pr *prSignedBy) isSignatureAuthorAccepted(ctx context.Context, image types
 
 	signature, err := verifyAndExtractSignature(mech, sig, signatureAcceptanceRules{
 		validateKeyIdentity: func(keyIdentity string) error {
-			for _, trustedIdentity := range trustedIdentities {
-				if keyIdentity == trustedIdentity {
-					return nil
-				}
+			if slices.Contains(trustedIdentities, keyIdentity) {
+				return nil
 			}
 			// Coverage: We use a private GPG home directory and only import trusted keys, so this should
 			// not be reachable.
@@ -63,7 +61,7 @@ func (pr *prSignedBy) isSignatureAuthorAccepted(ctx context.Context, image types
 		},
 		validateSignedDockerReference: func(ref string) error {
 			if !pr.SignedIdentity.matchesDockerReference(image, ref) {
-				return PolicyRequirementError(fmt.Sprintf("Signature for identity %s is not accepted", ref))
+				return PolicyRequirementError(fmt.Sprintf("Signature for identity %q is not accepted", ref))
 			}
 			return nil
 		},
@@ -89,8 +87,9 @@ func (pr *prSignedBy) isSignatureAuthorAccepted(ctx context.Context, image types
 	return sarAccepted, signature, nil
 }
 
-func (pr *prSignedBy) isRunningImageAllowed(ctx context.Context, image types.UnparsedImage) (bool, error) {
-	// FIXME: pass context.Context
+func (pr *prSignedBy) isRunningImageAllowed(ctx context.Context, image private.UnparsedImage) (bool, error) {
+	// FIXME: Use image.UntrustedSignatures, use that to improve error messages
+	// (needs tests!)
 	sigs, err := image.Signatures(ctx)
 	if err != nil {
 		return false, err
@@ -108,7 +107,7 @@ func (pr *prSignedBy) isRunningImageAllowed(ctx context.Context, image types.Unp
 			// Huh?! This should not happen at all; treat it as any other invalid value.
 			fallthrough
 		default:
-			reason = errors.Errorf(`Internal error: Unexpected signature verification result "%s"`, string(res))
+			reason = fmt.Errorf(`Internal error: Unexpected signature verification result %q`, string(res))
 		}
 		rejections = append(rejections, reason)
 	}
@@ -119,12 +118,7 @@ func (pr *prSignedBy) isRunningImageAllowed(ctx context.Context, image types.Unp
 	case 1:
 		summary = rejections[0]
 	default:
-		var msgs []string
-		for _, e := range rejections {
-			msgs = append(msgs, e.Error())
-		}
-		summary = PolicyRequirementError(fmt.Sprintf("None of the signatures were accepted, reasons: %s",
-			strings.Join(msgs, "; ")))
+		summary = PolicyRequirementError(multierr.Format("None of the signatures were accepted, reasons: ", "; ", "", rejections).Error())
 	}
 	return false, summary
 }

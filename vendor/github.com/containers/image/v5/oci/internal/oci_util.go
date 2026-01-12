@@ -1,10 +1,12 @@
 package internal
 
 import (
-	"github.com/pkg/errors"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -27,7 +29,7 @@ func ValidateImageName(image string) error {
 
 	var err error
 	if !refRegexp.MatchString(image) {
-		err = errors.Errorf("Invalid image %s", image)
+		err = fmt.Errorf("Invalid image %s", image)
 	}
 	return err
 }
@@ -57,13 +59,7 @@ func splitPathAndImageWindows(reference string) (string, string) {
 }
 
 func splitPathAndImageNonWindows(reference string) (string, string) {
-	sep := strings.SplitN(reference, ":", 2)
-	path := sep[0]
-
-	var image string
-	if len(sep) == 2 {
-		image = sep[1]
-	}
+	path, image, _ := strings.Cut(reference, ":") // image is set to "" if there is no ":"
 	return path, image
 }
 
@@ -72,11 +68,11 @@ func ValidateOCIPath(path string) error {
 	if runtime.GOOS == "windows" {
 		// On Windows we must allow for a ':' as part of the path
 		if strings.Count(path, ":") > 1 {
-			return errors.Errorf("Invalid OCI reference: path %s contains more than one colon", path)
+			return fmt.Errorf("Invalid OCI reference: path %s contains more than one colon", path)
 		}
 	} else {
 		if strings.Contains(path, ":") {
-			return errors.Errorf("Invalid OCI reference: path %s contains a colon", path)
+			return fmt.Errorf("Invalid OCI reference: path %s contains a colon", path)
 		}
 	}
 	return nil
@@ -96,16 +92,16 @@ func ValidateScope(scope string) error {
 
 	cleaned := filepath.Clean(scope)
 	if cleaned != scope {
-		return errors.Errorf(`Invalid scope %s: Uses non-canonical path format, perhaps try with path %s`, scope, cleaned)
+		return fmt.Errorf(`Invalid scope %s: Uses non-canonical path format, perhaps try with path %s`, scope, cleaned)
 	}
 
 	return nil
 }
 
 func validateScopeWindows(scope string) error {
-	matched, _ := regexp.Match(`^[a-zA-Z]:\\`, []byte(scope))
+	matched, _ := regexp.MatchString(`^[a-zA-Z]:\\`, scope)
 	if !matched {
-		return errors.Errorf("Invalid scope '%s'. Must be an absolute path", scope)
+		return fmt.Errorf("Invalid scope '%s'. Must be an absolute path", scope)
 	}
 
 	return nil
@@ -113,7 +109,7 @@ func validateScopeWindows(scope string) error {
 
 func validateScopeNonWindows(scope string) error {
 	if !strings.HasPrefix(scope, "/") {
-		return errors.Errorf("Invalid scope %s: must be an absolute path", scope)
+		return fmt.Errorf("Invalid scope %s: must be an absolute path", scope)
 	}
 
 	// Refuse also "/", otherwise "/" and "" would have the same semantics,
@@ -123,4 +119,32 @@ func validateScopeNonWindows(scope string) error {
 	}
 
 	return nil
+}
+
+// parseOCIReferenceName parses the image from the oci reference.
+func parseOCIReferenceName(image string) (img string, index int, err error) {
+	index = -1
+	if strings.HasPrefix(image, "@") {
+		idx, err := strconv.Atoi(image[1:])
+		if err != nil {
+			return "", index, fmt.Errorf("Invalid source index @%s: not an integer: %w", image[1:], err)
+		}
+		if idx < 0 {
+			return "", index, fmt.Errorf("Invalid source index @%d: must not be negative", idx)
+		}
+		index = idx
+	} else {
+		img = image
+	}
+	return img, index, nil
+}
+
+// ParseReferenceIntoElements splits the oci reference into location, image name and source index if exists
+func ParseReferenceIntoElements(reference string) (string, string, int, error) {
+	dir, image := SplitPathAndImage(reference)
+	image, index, err := parseOCIReferenceName(image)
+	if err != nil {
+		return "", "", -1, err
+	}
+	return dir, image, index, nil
 }

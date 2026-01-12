@@ -16,7 +16,7 @@ func getOverlayOpaqueXattrName() string {
 	return GetOverlayXattrName("opaque")
 }
 
-func GetWhiteoutConverter(format WhiteoutFormat, data interface{}) TarWhiteoutConverter {
+func GetWhiteoutConverter(format WhiteoutFormat, data any) TarWhiteoutConverter {
 	if format == OverlayWhiteoutFormat {
 		if rolayers, ok := data.([]string); ok && len(rolayers) > 0 {
 			return overlayWhiteoutConverter{rolayers: rolayers}
@@ -48,12 +48,12 @@ func (o overlayWhiteoutConverter) ConvertWrite(hdr *tar.Header, path string, fi 
 			return nil, err
 		}
 		if len(opaque) == 1 && opaque[0] == 'y' {
-			if hdr.Xattrs != nil {
-				delete(hdr.Xattrs, getOverlayOpaqueXattrName())
+			if hdr.PAXRecords != nil {
+				delete(hdr.PAXRecords, PaxSchilyXattr+getOverlayOpaqueXattrName())
 			}
 			// If there are no lower layers, then it can't have been deleted in this layer.
 			if len(o.rolayers) == 0 {
-				return nil, nil
+				return nil, nil //nolint: nilnil
 			}
 			// At this point, we have a directory that's opaque.  If it appears in one of the lower
 			// layers, then it was newly-created here, so it wasn't also deleted here.
@@ -66,7 +66,7 @@ func (o overlayWhiteoutConverter) ConvertWrite(hdr *tar.Header, path string, fi 
 				if statErr == nil {
 					if stat.Mode()&os.ModeCharDevice != 0 {
 						if isWhiteOut(stat) {
-							return nil, nil
+							return nil, nil //nolint: nilnil
 						}
 					}
 					// It's not whiteout, so it was there in the older layer, so we need to
@@ -100,7 +100,7 @@ func (o overlayWhiteoutConverter) ConvertWrite(hdr *tar.Header, path string, fi 
 							// original directory wasn't inherited into this layer,
 							// so we don't need to emit whiteout for it.
 							if isWhiteOut(stat) {
-								return nil, nil
+								return nil, nil //nolint: nilnil
 							}
 						}
 					}
@@ -124,8 +124,7 @@ func (overlayWhiteoutConverter) ConvertReadWithHandler(hdr *tar.Header, path str
 	}
 
 	// if a file was deleted and we are using overlay, we need to create a character device
-	if strings.HasPrefix(base, WhiteoutPrefix) {
-		originalBase := base[len(WhiteoutPrefix):]
+	if originalBase, ok := strings.CutPrefix(base, WhiteoutPrefix); ok {
 		originalPath := filepath.Join(dir, originalBase)
 
 		if err := handler.Mknod(originalPath, unix.S_IFCHR, 0); err != nil {
@@ -153,8 +152,7 @@ func (overlayWhiteoutConverter) ConvertReadWithHandler(hdr *tar.Header, path str
 	return true, nil
 }
 
-type directHandler struct {
-}
+type directHandler struct{}
 
 func (d directHandler) Setxattr(path, name string, value []byte) error {
 	return unix.Setxattr(path, name, value, 0)
@@ -175,7 +173,7 @@ func (o overlayWhiteoutConverter) ConvertRead(hdr *tar.Header, path string) (boo
 
 func isWhiteOut(stat os.FileInfo) bool {
 	s := stat.Sys().(*syscall.Stat_t)
-	return major(uint64(s.Rdev)) == 0 && minor(uint64(s.Rdev)) == 0
+	return major(uint64(s.Rdev)) == 0 && minor(uint64(s.Rdev)) == 0 //nolint:unconvert
 }
 
 func GetFileOwner(path string) (uint32, uint32, uint32, error) {
@@ -185,7 +183,26 @@ func GetFileOwner(path string) (uint32, uint32, uint32, error) {
 	}
 	s, ok := f.Sys().(*syscall.Stat_t)
 	if ok {
-		return s.Uid, s.Gid, s.Mode & 07777, nil
+		return s.Uid, s.Gid, s.Mode & 0o7777, nil
 	}
 	return 0, 0, uint32(f.Mode()), nil
+}
+
+func handleLChmod(hdr *tar.Header, path string, hdrInfo os.FileInfo, forceMask *os.FileMode) error {
+	permissionsMask := hdrInfo.Mode()
+	if forceMask != nil {
+		permissionsMask = *forceMask
+	}
+	if hdr.Typeflag == tar.TypeLink {
+		if fi, err := os.Lstat(hdr.Linkname); err == nil && (fi.Mode()&os.ModeSymlink == 0) {
+			if err := os.Chmod(path, permissionsMask); err != nil {
+				return err
+			}
+		}
+	} else if hdr.Typeflag != tar.TypeSymlink {
+		if err := os.Chmod(path, permissionsMask); err != nil {
+			return err
+		}
+	}
+	return nil
 }

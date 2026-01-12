@@ -2,6 +2,7 @@ package toml
 
 import (
 	"bufio"
+	"bytes"
 	"encoding"
 	"encoding/json"
 	"errors"
@@ -76,15 +77,26 @@ type Marshaler interface {
 	MarshalTOML() ([]byte, error)
 }
 
+// Marshal returns a TOML representation of the Go value.
+//
+// See [Encoder] for a description of the encoding process.
+func Marshal(v any) ([]byte, error) {
+	buff := new(bytes.Buffer)
+	if err := NewEncoder(buff).Encode(v); err != nil {
+		return nil, err
+	}
+	return buff.Bytes(), nil
+}
+
 // Encoder encodes a Go to a TOML document.
 //
 // The mapping between Go values and TOML values should be precisely the same as
-// for the Decode* functions.
+// for [Decode].
 //
 // time.Time is encoded as a RFC 3339 string, and time.Duration as its string
 // representation.
 //
-// The toml.Marshaler and encoder.TextMarshaler interfaces are supported to
+// The [Marshaler] and [encoding.TextMarshaler] interfaces are supported to
 // encoding the value as custom TOML.
 //
 // If you want to write arbitrary binary data then you will need to use
@@ -115,28 +127,24 @@ type Marshaler interface {
 // NOTE: only exported keys are encoded due to the use of reflection. Unexported
 // keys are silently discarded.
 type Encoder struct {
-	// String to use for a single indentation level; default is two spaces.
-	Indent string
-
+	Indent     string // string for a single indentation level; default is two spaces.
+	hasWritten bool   // written any output to w yet?
 	w          *bufio.Writer
-	hasWritten bool // written any output to w yet?
 }
 
 // NewEncoder create a new Encoder.
 func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{
-		w:      bufio.NewWriter(w),
-		Indent: "  ",
-	}
+	return &Encoder{w: bufio.NewWriter(w), Indent: "  "}
 }
 
-// Encode writes a TOML representation of the Go value to the Encoder's writer.
+// Encode writes a TOML representation of the Go value to the [Encoder]'s writer.
 //
 // An error is returned if the value given cannot be encoded to a valid TOML
 // document.
-func (enc *Encoder) Encode(v interface{}) error {
+func (enc *Encoder) Encode(v any) error {
 	rv := eindirect(reflect.ValueOf(v))
-	if err := enc.safeEncode(Key([]string{}), rv); err != nil {
+	err := enc.safeEncode(Key([]string{}), rv)
+	if err != nil {
 		return err
 	}
 	return enc.w.Flush()
@@ -261,7 +269,7 @@ func (enc *Encoder) eElement(rv reflect.Value) {
 			enc.eElement(reflect.ValueOf(v))
 			return
 		}
-		encPanic(errors.New(fmt.Sprintf("Unable to convert \"%s\" to neither int64 nor float64", n)))
+		encPanic(fmt.Errorf("unable to convert %q to int64 or float64", n))
 	}
 
 	switch rv.Kind() {
@@ -279,18 +287,30 @@ func (enc *Encoder) eElement(rv reflect.Value) {
 	case reflect.Float32:
 		f := rv.Float()
 		if math.IsNaN(f) {
+			if math.Signbit(f) {
+				enc.wf("-")
+			}
 			enc.wf("nan")
 		} else if math.IsInf(f, 0) {
-			enc.wf("%cinf", map[bool]byte{true: '-', false: '+'}[math.Signbit(f)])
+			if math.Signbit(f) {
+				enc.wf("-")
+			}
+			enc.wf("inf")
 		} else {
 			enc.wf(floatAddDecimal(strconv.FormatFloat(f, 'f', -1, 32)))
 		}
 	case reflect.Float64:
 		f := rv.Float()
 		if math.IsNaN(f) {
+			if math.Signbit(f) {
+				enc.wf("-")
+			}
 			enc.wf("nan")
 		} else if math.IsInf(f, 0) {
-			enc.wf("%cinf", map[bool]byte{true: '-', false: '+'}[math.Signbit(f)])
+			if math.Signbit(f) {
+				enc.wf("-")
+			}
+			enc.wf("inf")
 		} else {
 			enc.wf(floatAddDecimal(strconv.FormatFloat(f, 'f', -1, 64)))
 		}
@@ -303,7 +323,7 @@ func (enc *Encoder) eElement(rv reflect.Value) {
 	case reflect.Interface:
 		enc.eElement(rv.Elem())
 	default:
-		encPanic(fmt.Errorf("unexpected type: %T", rv.Interface()))
+		encPanic(fmt.Errorf("unexpected type: %s", fmtType(rv.Interface())))
 	}
 }
 
@@ -382,31 +402,30 @@ func (enc *Encoder) eMap(key Key, rv reflect.Value, inline bool) {
 
 	// Sort keys so that we have deterministic output. And write keys directly
 	// underneath this key first, before writing sub-structs or sub-maps.
-	var mapKeysDirect, mapKeysSub []string
+	var mapKeysDirect, mapKeysSub []reflect.Value
 	for _, mapKey := range rv.MapKeys() {
-		k := mapKey.String()
 		if typeIsTable(tomlTypeOfGo(eindirect(rv.MapIndex(mapKey)))) {
-			mapKeysSub = append(mapKeysSub, k)
+			mapKeysSub = append(mapKeysSub, mapKey)
 		} else {
-			mapKeysDirect = append(mapKeysDirect, k)
+			mapKeysDirect = append(mapKeysDirect, mapKey)
 		}
 	}
 
-	var writeMapKeys = func(mapKeys []string, trailC bool) {
-		sort.Strings(mapKeys)
+	writeMapKeys := func(mapKeys []reflect.Value, trailC bool) {
+		sort.Slice(mapKeys, func(i, j int) bool { return mapKeys[i].String() < mapKeys[j].String() })
 		for i, mapKey := range mapKeys {
-			val := eindirect(rv.MapIndex(reflect.ValueOf(mapKey)))
+			val := eindirect(rv.MapIndex(mapKey))
 			if isNil(val) {
 				continue
 			}
 
 			if inline {
-				enc.writeKeyValue(Key{mapKey}, val, true)
+				enc.writeKeyValue(Key{mapKey.String()}, val, true)
 				if trailC || i != len(mapKeys)-1 {
 					enc.wf(", ")
 				}
 			} else {
-				enc.encode(key.add(mapKey), val)
+				enc.encode(key.add(mapKey.String()), val)
 			}
 		}
 	}
@@ -420,8 +439,6 @@ func (enc *Encoder) eMap(key Key, rv reflect.Value, inline bool) {
 		enc.wf("}")
 	}
 }
-
-const is32Bit = (32 << (^uint(0) >> 63)) == 32
 
 func pointerTo(t reflect.Type) reflect.Type {
 	if t.Kind() == reflect.Ptr {
@@ -457,6 +474,15 @@ func (enc *Encoder) eStruct(key Key, rv reflect.Value, inline bool) {
 
 			frv := eindirect(rv.Field(i))
 
+			// Need to make a copy because ... ehm, I don't know why... I guess
+			// allocating a new array can cause it to fail(?)
+			//
+			// Done for: https://github.com/BurntSushi/toml/issues/430
+			// Previously only on 32bit for: https://github.com/BurntSushi/toml/issues/314
+			copyStart := make([]int, len(start))
+			copy(copyStart, start)
+			start = copyStart
+
 			// Treat anonymous struct fields with tag names as though they are
 			// not anonymous, like encoding/json does.
 			//
@@ -471,49 +497,43 @@ func (enc *Encoder) eStruct(key Key, rv reflect.Value, inline bool) {
 			if typeIsTable(tomlTypeOfGo(frv)) {
 				fieldsSub = append(fieldsSub, append(start, f.Index...))
 			} else {
-				// Copy so it works correct on 32bit archs; not clear why this
-				// is needed. See #314, and https://www.reddit.com/r/golang/comments/pnx8v4
-				// This also works fine on 64bit, but 32bit archs are somewhat
-				// rare and this is a wee bit faster.
-				if is32Bit {
-					copyStart := make([]int, len(start))
-					copy(copyStart, start)
-					fieldsDirect = append(fieldsDirect, append(copyStart, f.Index...))
-				} else {
-					fieldsDirect = append(fieldsDirect, append(start, f.Index...))
-				}
+				fieldsDirect = append(fieldsDirect, append(start, f.Index...))
 			}
 		}
 	}
 	addFields(rt, rv, nil)
 
-	writeFields := func(fields [][]int) {
+	writeFields := func(fields [][]int, totalFields int) {
 		for _, fieldIndex := range fields {
 			fieldType := rt.FieldByIndex(fieldIndex)
-			fieldVal := eindirect(rv.FieldByIndex(fieldIndex))
-
-			if isNil(fieldVal) { /// Don't write anything for nil fields.
-				continue
-			}
+			fieldVal := rv.FieldByIndex(fieldIndex)
 
 			opts := getOptions(fieldType.Tag)
 			if opts.skip {
 				continue
 			}
+			if opts.omitempty && isEmpty(fieldVal) {
+				continue
+			}
+
+			fieldVal = eindirect(fieldVal)
+
+			if isNil(fieldVal) { /// Don't write anything for nil fields.
+				continue
+			}
+
 			keyName := fieldType.Name
 			if opts.name != "" {
 				keyName = opts.name
 			}
-			if opts.omitempty && isEmpty(fieldVal) {
-				continue
-			}
+
 			if opts.omitzero && isZero(fieldVal) {
 				continue
 			}
 
 			if inline {
 				enc.writeKeyValue(Key{keyName}, fieldVal, true)
-				if fieldIndex[0] != len(fields)-1 {
+				if fieldIndex[0] != totalFields-1 {
 					enc.wf(", ")
 				}
 			} else {
@@ -525,8 +545,10 @@ func (enc *Encoder) eStruct(key Key, rv reflect.Value, inline bool) {
 	if inline {
 		enc.wf("{")
 	}
-	writeFields(fieldsDirect)
-	writeFields(fieldsSub)
+
+	l := len(fieldsDirect) + len(fieldsSub)
+	writeFields(fieldsDirect, l)
+	writeFields(fieldsSub, l)
 	if inline {
 		enc.wf("}")
 	}
@@ -653,9 +675,25 @@ func isEmpty(rv reflect.Value) bool {
 	case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
 		return rv.Len() == 0
 	case reflect.Struct:
-		return reflect.Zero(rv.Type()).Interface() == rv.Interface()
+		if rv.Type().Comparable() {
+			return reflect.Zero(rv.Type()).Interface() == rv.Interface()
+		}
+		// Need to also check if all the fields are empty, otherwise something
+		// like this with uncomparable types will always return true:
+		//
+		//   type a struct{ field b }
+		//   type b struct{ s []string }
+		//   s := a{field: b{s: []string{"AAA"}}}
+		for i := 0; i < rv.NumField(); i++ {
+			if !isEmpty(rv.Field(i)) {
+				return false
+			}
+		}
+		return true
 	case reflect.Bool:
 		return !rv.Bool()
+	case reflect.Ptr:
+		return rv.IsNil()
 	}
 	return false
 }
@@ -668,19 +706,21 @@ func (enc *Encoder) newline() {
 
 // Write a key/value pair:
 //
-//   key = <any value>
+//	key = <any value>
 //
 // This is also used for "k = v" in inline tables; so something like this will
 // be written in three calls:
 //
-//     ┌────────────────────┐
-//     │      ┌───┐  ┌─────┐│
-//     v      v   v  v     vv
-//     key = {k = v, k2 = v2}
-//
+//	┌───────────────────┐
+//	│      ┌───┐  ┌────┐│
+//	v      v   v  v    vv
+//	key = {k = 1, k2 = 2}
 func (enc *Encoder) writeKeyValue(key Key, val reflect.Value, inline bool) {
+	/// Marshaler used on top-level document; call eElement() to just call
+	/// Marshal{TOML,Text}.
 	if len(key) == 0 {
-		encPanic(errNoKey)
+		enc.eElement(val)
+		return
 	}
 	enc.wf("%s%s = ", enc.indentStr(key), key.maybeQuoted(len(key)-1))
 	enc.eElement(val)
@@ -689,7 +729,7 @@ func (enc *Encoder) writeKeyValue(key Key, val reflect.Value, inline bool) {
 	}
 }
 
-func (enc *Encoder) wf(format string, v ...interface{}) {
+func (enc *Encoder) wf(format string, v ...any) {
 	_, err := fmt.Fprintf(enc.w, format, v...)
 	if err != nil {
 		encPanic(err)

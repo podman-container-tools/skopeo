@@ -2,13 +2,16 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/containers/image/v5/docker/internal/tarfile"
 	"github.com/containers/image/v5/docker/reference"
+	"github.com/containers/image/v5/internal/private"
 	"github.com/containers/image/v5/types"
 	"github.com/docker/docker/client"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,13 +29,13 @@ type daemonImageDestination struct {
 }
 
 // newImageDestination returns a types.ImageDestination for the specified image reference.
-func newImageDestination(ctx context.Context, sys *types.SystemContext, ref daemonReference) (types.ImageDestination, error) {
+func newImageDestination(ctx context.Context, sys *types.SystemContext, ref daemonReference) (private.ImageDestination, error) {
 	if ref.ref == nil {
-		return nil, errors.Errorf("Invalid destination docker-daemon:%s: a destination must be a name:tag", ref.StringWithinTransport())
+		return nil, fmt.Errorf("Invalid destination docker-daemon:%s: a destination must be a name:tag", ref.StringWithinTransport())
 	}
 	namedTaggedRef, ok := ref.ref.(reference.NamedTagged)
 	if !ok {
-		return nil, errors.Errorf("Invalid destination docker-daemon:%s: a destination must be a name:tag", ref.StringWithinTransport())
+		return nil, fmt.Errorf("Invalid destination docker-daemon:%s: a destination must be a name:tag", ref.StringWithinTransport())
 	}
 
 	var mustMatchRuntimeOS = true
@@ -42,7 +45,7 @@ func newImageDestination(ctx context.Context, sys *types.SystemContext, ref daem
 
 	c, err := newDockerClient(sys)
 	if err != nil {
-		return nil, errors.Wrap(err, "initializing docker engine client")
+		return nil, fmt.Errorf("initializing docker engine client: %w", err)
 	}
 
 	reader, writer := io.Pipe()
@@ -53,20 +56,22 @@ func newImageDestination(ctx context.Context, sys *types.SystemContext, ref daem
 	goroutineContext, goroutineCancel := context.WithCancel(ctx)
 	go imageLoadGoroutine(goroutineContext, c, reader, statusChannel)
 
-	return &daemonImageDestination{
+	d := &daemonImageDestination{
 		ref:                ref,
 		mustMatchRuntimeOS: mustMatchRuntimeOS,
-		Destination:        tarfile.NewDestination(sys, archive, namedTaggedRef),
 		archive:            archive,
 		goroutineCancel:    goroutineCancel,
 		statusChannel:      statusChannel,
 		writer:             writer,
 		committed:          false,
-	}, nil
+	}
+	d.Destination = tarfile.NewDestination(sys, archive, ref.Transport().Name(), namedTaggedRef, d.CommitWithOptions)
+	return d, nil
 }
 
 // imageLoadGoroutine accepts tar stream on reader, sends it to c, and reports error or success by writing to statusChannel
 func imageLoadGoroutine(ctx context.Context, c *client.Client, reader *io.PipeReader, statusChannel chan<- error) {
+	defer c.Close()
 	err := errors.New("Internal error: unexpected panic in imageLoadGoroutine")
 	defer func() {
 		logrus.Debugf("docker-daemon: sending done, status %v", err)
@@ -82,12 +87,40 @@ func imageLoadGoroutine(ctx context.Context, c *client.Client, reader *io.PipeRe
 		}
 	}()
 
-	resp, err := c.ImageLoad(ctx, reader, true)
+	err = imageLoad(ctx, c, reader)
+}
+
+// imageLoad accepts tar stream on reader and sends it to c
+func imageLoad(ctx context.Context, c *client.Client, reader *io.PipeReader) error {
+	resp, err := c.ImageLoad(ctx, reader, client.ImageLoadWithQuiet(true))
 	if err != nil {
-		err = errors.Wrap(err, "saving image to docker engine")
-		return
+		return fmt.Errorf("starting a load operation in docker engine: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// jsonError and jsonMessage are small subsets of docker/docker/pkg/jsonmessage.JSONError and JSONMessage,
+	// copied here to minimize dependencies.
+	type jsonError struct {
+		Message string `json:"message,omitempty"`
+	}
+	type jsonMessage struct {
+		Error *jsonError `json:"errorDetail,omitempty"`
+	}
+
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var msg jsonMessage
+		if err := dec.Decode(&msg); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("parsing docker load progress: %w", err)
+		}
+		if msg.Error != nil {
+			return fmt.Errorf("docker engine reported: %q", msg.Error.Message)
+		}
+	}
+	return nil // No error reported = success
 }
 
 // DesiredLayerCompression indicates if layers must be compressed, decompressed or preserved
@@ -114,7 +147,7 @@ func (d *daemonImageDestination) Close() error {
 		// immediately, and hopefully, through terminating the sending which uses "Transfer-Encoding: chunked"" without sending
 		// the terminating zero-length chunk, prevent the docker daemon from processing the tar stream at all.
 		// Whether that works or not, closing the PipeWriter seems desirable in any case.
-		if err := d.writer.CloseWithError(errors.New("Aborting upload, daemonImageDestination closed without a previous .Commit()")); err != nil {
+		if err := d.writer.CloseWithError(errors.New("Aborting upload, daemonImageDestination closed without a previous .CommitWithOptions()")); err != nil {
 			return err
 		}
 	}
@@ -127,14 +160,11 @@ func (d *daemonImageDestination) Reference() types.ImageReference {
 	return d.ref
 }
 
-// Commit marks the process of storing the image as successful and asks for the image to be persisted.
-// unparsedToplevel contains data about the top-level manifest of the source (which may be a single-arch image or a manifest list
-// if PutManifest was only called for the single-arch image with instanceDigest == nil), primarily to allow lookups by the
-// original manifest list digest, if desired.
+// CommitWithOptions marks the process of storing the image as successful and asks for the image to be persisted.
 // WARNING: This does not have any transactional semantics:
-// - Uploaded data MAY be visible to others before Commit() is called
-// - Uploaded data MAY be removed or MAY remain around if Close() is called without Commit() (i.e. rollback is allowed but not guaranteed)
-func (d *daemonImageDestination) Commit(ctx context.Context, unparsedToplevel types.UnparsedImage) error {
+// - Uploaded data MAY be visible to others before CommitWithOptions() is called
+// - Uploaded data MAY be removed or MAY remain around if Close() is called without CommitWithOptions() (i.e. rollback is allowed but not guaranteed)
+func (d *daemonImageDestination) CommitWithOptions(ctx context.Context, options private.CommitOptions) error {
 	logrus.Debugf("docker-daemon: Closing tar stream")
 	if err := d.archive.Close(); err != nil {
 		return err

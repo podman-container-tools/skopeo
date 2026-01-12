@@ -1,5 +1,4 @@
 //go:build cgo
-// +build cgo
 
 package copy
 
@@ -11,12 +10,12 @@ package copy
 #endif
 */
 import "C"
+
 import (
 	"container/list"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +40,7 @@ const (
 )
 
 // CopyRegularToFile copies the content of a file to another
-func CopyRegularToFile(srcPath string, dstFile *os.File, fileinfo os.FileInfo, copyWithFileRange, copyWithFileClone *bool) error { // nolint: golint
+func CopyRegularToFile(srcPath string, dstFile *os.File, fileinfo os.FileInfo, copyWithFileRange, copyWithFileClone *bool) error { //nolint: revive
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
 		return err
@@ -49,13 +48,13 @@ func CopyRegularToFile(srcPath string, dstFile *os.File, fileinfo os.FileInfo, c
 	defer srcFile.Close()
 
 	if *copyWithFileClone {
-		_, _, err = unix.Syscall(unix.SYS_IOCTL, dstFile.Fd(), C.FICLONE, srcFile.Fd())
-		if err == nil {
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, dstFile.Fd(), C.FICLONE, srcFile.Fd())
+		if errno == 0 {
 			return nil
 		}
 
 		*copyWithFileClone = false
-		if err == unix.EXDEV {
+		if errno == unix.EXDEV {
 			*copyWithFileRange = false
 		}
 	}
@@ -73,7 +72,7 @@ func CopyRegularToFile(srcPath string, dstFile *os.File, fileinfo os.FileInfo, c
 }
 
 // CopyRegular copies the content of a file to another
-func CopyRegular(srcPath, dstPath string, fileinfo os.FileInfo, copyWithFileRange, copyWithFileClone *bool) error { // nolint: golint
+func CopyRegular(srcPath, dstPath string, fileinfo os.FileInfo, copyWithFileRange, copyWithFileClone *bool) error { //nolint: revive
 	// If the destination file already exists, we shouldn't blow it away
 	dstFile, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileinfo.Mode())
 	if err != nil {
@@ -107,7 +106,7 @@ func legacyCopy(srcFile io.Reader, dstFile io.Writer) error {
 
 func copyXattr(srcPath, dstPath, attr string) error {
 	data, err := system.Lgetxattr(srcPath, attr)
-	if err != nil && !errors.Is(err, unix.EOPNOTSUPP) {
+	if err != nil && !errors.Is(err, system.ENOTSUP) {
 		return err
 	}
 	if data != nil {
@@ -161,7 +160,10 @@ func DirCopy(srcDir, dstDir string, copyMode Mode, copyXattrs bool) error {
 
 		switch mode := f.Mode(); {
 		case mode.IsRegular():
-			id := fileID{dev: uint64(stat.Dev), ino: stat.Ino}
+			id := fileID{
+				dev: uint64(stat.Dev), //nolint:unconvert
+				ino: stat.Ino,
+			}
 			if copyMode == Hardlink {
 				isHardlink = true
 				if err2 := os.Link(srcPath, dstPath); err2 != nil {
@@ -199,11 +201,9 @@ func DirCopy(srcDir, dstDir string, copyMode Mode, copyXattrs bool) error {
 			}
 
 		case mode&os.ModeSocket != 0:
-			s, err := net.Listen("unix", dstPath)
-			if err != nil {
+			if err := unix.Mknod(dstPath, stat.Mode, int(stat.Rdev)); err != nil {
 				return err
 			}
-			s.Close()
 
 		case mode&os.ModeDevice != 0:
 			if unshare.IsRootless() {
@@ -245,12 +245,11 @@ func DirCopy(srcDir, dstDir string, copyMode Mode, copyXattrs bool) error {
 		}
 
 		// system.Chtimes doesn't support a NOFOLLOW flag atm
-		// nolint: unconvert
 		if f.IsDir() {
 			dirsToSetMtimes.PushFront(&dirMtimeInfo{dstPath: &dstPath, stat: stat})
 		} else if !isSymlink {
-			aTime := time.Unix(int64(stat.Atim.Sec), int64(stat.Atim.Nsec))
-			mTime := time.Unix(int64(stat.Mtim.Sec), int64(stat.Mtim.Nsec))
+			aTime := time.Unix(stat.Atim.Unix())
+			mTime := time.Unix(stat.Mtim.Unix())
 			if err := system.Chtimes(dstPath, aTime, mTime); err != nil {
 				return err
 			}
@@ -282,7 +281,7 @@ func doCopyXattrs(srcPath, dstPath string) error {
 	}
 
 	xattrs, err := system.Llistxattr(srcPath)
-	if err != nil && !errors.Is(err, unix.EOPNOTSUPP) {
+	if err != nil && !errors.Is(err, system.ENOTSUP) {
 		return err
 	}
 

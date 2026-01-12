@@ -3,7 +3,7 @@ package stringutils
 
 import (
 	"bytes"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 )
 
@@ -13,7 +13,7 @@ func GenerateRandomAlphaOnlyString(n int) string {
 	letters := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[rand.IntN(len(letters))]
 	}
 	return string(b)
 }
@@ -24,8 +24,8 @@ func GenerateRandomASCIIString(n int) string {
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 		"~!@#$%^&*()-_+={}[]\\|<,>.?/\"';:` "
 	res := make([]byte, n)
-	for i := 0; i < n; i++ {
-		res[i] = chars[rand.Intn(len(chars))]
+	for i := range n {
+		res[i] = chars[rand.IntN(len(chars))]
 	}
 	return string(res)
 }
@@ -83,7 +83,7 @@ func quote(word string, buf *bytes.Buffer) {
 
 	buf.WriteString("'")
 
-	for i := 0; i < len(word); i++ {
+	for i := range len(word) {
 		b := word[i]
 		if b == '\'' {
 			// Replace literal ' with a close ', a \', and an open '

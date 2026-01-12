@@ -1,4 +1,4 @@
-// +build !linux !libsubid !cgo
+//go:build !linux || !libsubid || !cgo
 
 package idtools
 

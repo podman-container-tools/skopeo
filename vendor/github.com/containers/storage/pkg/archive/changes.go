@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/pools"
 	"github.com/containers/storage/pkg/system"
@@ -56,7 +58,7 @@ func (change *Change) String() string {
 	return fmt.Sprintf("%s %s", change.Kind, change.Path)
 }
 
-// for sort.Sort
+// changesByPath implements sort.Interface.
 type changesByPath []Change
 
 func (c changesByPath) Less(i, j int) bool { return c[i].Path < c[j].Path }
@@ -68,7 +70,7 @@ func (c changesByPath) Swap(i, j int)      { c[j], c[i] = c[i], c[j] }
 // files, we handle this by comparing for exact times, *or* same
 // second count and either a or b having exactly 0 nanoseconds
 func sameFsTime(a, b time.Time) bool {
-	return a == b ||
+	return a.Equal(b) ||
 		(a.Unix() == b.Unix() &&
 			(a.Nanosecond() == 0 || b.Nanosecond() == 0))
 }
@@ -96,8 +98,7 @@ func aufsDeletedFile(root, path string, fi os.FileInfo) (string, error) {
 	f := filepath.Base(path)
 
 	// If there is a whiteout, then the file was removed
-	if strings.HasPrefix(f, WhiteoutPrefix) {
-		originalFile := f[len(WhiteoutPrefix):]
+	if originalFile, ok := strings.CutPrefix(f, WhiteoutPrefix); ok {
 		return filepath.Join(filepath.Dir(path), originalFile), nil
 	}
 
@@ -106,7 +107,7 @@ func aufsDeletedFile(root, path string, fi os.FileInfo) (string, error) {
 
 func aufsWhiteoutPresent(root, path string) (bool, error) {
 	f := filepath.Join(filepath.Dir(path), WhiteoutPrefix+filepath.Base(path))
-	_, err := os.Stat(filepath.Join(root, f))
+	err := fileutils.Exists(filepath.Join(root, f))
 	if err == nil {
 		return true, nil
 	}
@@ -131,9 +132,11 @@ func isENOTDIR(err error) bool {
 	return false
 }
 
-type skipChange func(string) (bool, error)
-type deleteChange func(string, string, os.FileInfo) (string, error)
-type whiteoutChange func(string, string) (bool, error)
+type (
+	skipChange     func(string) (bool, error)
+	deleteChange   func(string, string, os.FileInfo) (string, error)
+	whiteoutChange func(string, string) (bool, error)
+)
 
 func changes(layers []string, rw string, dc deleteChange, sc skipChange, wc whiteoutChange) ([]Change, error) {
 	var (
@@ -267,6 +270,7 @@ type FileInfo struct {
 	capability []byte
 	added      bool
 	xattrs     map[string]string
+	target     string
 }
 
 // LookUp looks up the file information of a file.
@@ -299,7 +303,6 @@ func (info *FileInfo) path() string {
 }
 
 func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
-
 	sizeAtEntry := len(*changes)
 
 	if oldInfo == nil {
@@ -317,9 +320,7 @@ func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
 	// otherwise any previous delete/change is considered recursive
 	oldChildren := make(map[string]*FileInfo)
 	if oldInfo != nil && info.isDir() {
-		for k, v := range oldInfo.children {
-			oldChildren[k] = v
-		}
+		maps.Copy(oldChildren, oldInfo.children)
 	}
 
 	for name, newChild := range info.children {
@@ -336,6 +337,7 @@ func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
 			// back mtime
 			if statDifferent(oldStat, oldInfo, newStat, info) ||
 				!bytes.Equal(oldChild.capability, newChild.capability) ||
+				oldChild.target != newChild.target ||
 				!reflect.DeepEqual(oldChild.xattrs, newChild.xattrs) {
 				change := Change{
 					Path: newChild.path(),
@@ -373,7 +375,6 @@ func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
 		copy((*changes)[sizeAtEntry+1:], (*changes)[sizeAtEntry:])
 		(*changes)[sizeAtEntry] = change
 	}
-
 }
 
 // Changes add changes to file information.
@@ -391,6 +392,7 @@ func newRootFileInfo(idMappings *idtools.IDMappings) *FileInfo {
 		name:       string(os.PathSeparator),
 		idMappings: idMappings,
 		children:   make(map[string]*FileInfo),
+		target:     "",
 	}
 	return root
 }
@@ -398,9 +400,7 @@ func newRootFileInfo(idMappings *idtools.IDMappings) *FileInfo {
 // ChangesDirs compares two directories and generates an array of Change objects describing the changes.
 // If oldDir is "", then all files in newDir will be Add-Changes.
 func ChangesDirs(newDir string, newMappings *idtools.IDMappings, oldDir string, oldMappings *idtools.IDMappings) ([]Change, error) {
-	var (
-		oldRoot, newRoot *FileInfo
-	)
+	var oldRoot, newRoot *FileInfo
 	if oldDir == "" {
 		emptyDir, err := os.MkdirTemp("", "empty")
 		if err != nil {
@@ -452,7 +452,7 @@ func ChangesSize(newDir string, changes []Change) int64 {
 func ExportChanges(dir string, changes []Change, uidMaps, gidMaps []idtools.IDMap) (io.ReadCloser, error) {
 	reader, writer := io.Pipe()
 	go func() {
-		ta := newTarAppender(idtools.NewIDMappingsFromMaps(uidMaps, gidMaps), writer, nil)
+		ta := newTarWriter(idtools.NewIDMappingsFromMaps(uidMaps, gidMaps), writer, nil, nil)
 
 		// this buffer is needed for the duration of this piped stream
 		defer pools.BufioWriter32KPool.Put(ta.Buffer)
@@ -481,8 +481,14 @@ func ExportChanges(dir string, changes []Change, uidMaps, gidMaps []idtools.IDMa
 				}
 			} else {
 				path := filepath.Join(dir, change.Path)
-				if err := ta.addTarFile(path, change.Path[1:]); err != nil {
+				headers, err := ta.prepareAddFile(path, change.Path[1:])
+				if err != nil {
 					logrus.Debugf("Can't add file %s to tar: %s", path, err)
+				} else if headers != nil {
+					if err := ta.addFile(headers); err != nil {
+						writer.CloseWithError(err)
+						return
+					}
 				}
 			}
 		}

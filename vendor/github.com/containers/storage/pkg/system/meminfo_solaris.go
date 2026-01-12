@@ -1,5 +1,4 @@
 //go:build solaris && cgo
-// +build solaris,cgo
 
 package system
 
@@ -81,9 +80,9 @@ func getFreeMem() int64 {
 }
 
 // ReadMemInfo retrieves memory statistics of the host system and returns a
-//  MemInfo type.
+//
+//	MemInfo type.
 func ReadMemInfo() (*MemInfo, error) {
-
 	ppKernel := C.getPpKernel()
 	MemTotal := getTotalMem()
 	MemFree := getFreeMem()

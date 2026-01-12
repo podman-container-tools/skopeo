@@ -15,62 +15,70 @@
 package schema
 
 import (
+	"embed"
 	"net/http"
 
-	"github.com/opencontainers/image-spec/specs-go/v1"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // Media types for the OCI image formats
 const (
-	ValidatorMediaTypeDescriptor   Validator     = v1.MediaTypeDescriptor
-	ValidatorMediaTypeLayoutHeader Validator     = v1.MediaTypeLayoutHeader
-	ValidatorMediaTypeManifest     Validator     = v1.MediaTypeImageManifest
-	ValidatorMediaTypeImageIndex   Validator     = v1.MediaTypeImageIndex
-	ValidatorMediaTypeImageConfig  Validator     = v1.MediaTypeImageConfig
-	ValidatorMediaTypeImageLayer   unimplemented = v1.MediaTypeImageLayer
+	ValidatorMediaTypeDescriptor   Validator = v1.MediaTypeDescriptor
+	ValidatorMediaTypeLayoutHeader Validator = v1.MediaTypeLayoutHeader
+	ValidatorMediaTypeManifest     Validator = v1.MediaTypeImageManifest
+	ValidatorMediaTypeImageIndex   Validator = v1.MediaTypeImageIndex
+	ValidatorMediaTypeImageConfig  Validator = v1.MediaTypeImageConfig
+	ValidatorMediaTypeImageLayer   Validator = v1.MediaTypeImageLayer
 )
 
 var (
-	// fs stores the embedded http.FileSystem
-	// having the OCI JSON schema files in root "/".
-	fs = _escFS(false)
+	// specFS stores the embedded http.FileSystem having the OCI JSON schema files in root "/".
+	//go:embed *.json
+	specFS embed.FS
 
-	// schemaNamespaces is a set of URI prefixes which are treated as containing the schema files of fs.
-	// This is necessary because *.json schema files in this directory use "id" and "$ref" attributes which evaluate to such URIs, e.g.
-	// ./image-manifest-schema.json URI contains
-	//   "id": "https://opencontainers.org/schema/image/manifest",
-	// and
-	//   "$ref": "content-descriptor.json"
-	// which evaluates as a link to https://opencontainers.org/schema/image/content-descriptor.json .
-	//
-	// To support such links without accessing the network (and trying to load content which is not hosted at these URIs),
-	// fsLoaderFactory accepts any URI starting with one of the schemaNamespaces below,
-	// and uses _escFS to load them from the root of its in-memory filesystem tree.
-	//
-	// (Note that this must contain subdirectories before its parent directories for fsLoaderFactory.refContents to work.)
-	schemaNamespaces = []string{
-		"https://opencontainers.org/schema/image/descriptor/",
-		"https://opencontainers.org/schema/image/index/",
-		"https://opencontainers.org/schema/image/manifest/",
-		"https://opencontainers.org/schema/image/",
-		"https://opencontainers.org/schema/descriptor/",
-		"https://opencontainers.org/schema/",
+	// specsOrig maps OCI schema media types to schema files.
+	specs = map[Validator]string{
+		ValidatorMediaTypeDescriptor:   "content-descriptor.json",
+		ValidatorMediaTypeLayoutHeader: "image-layout-schema.json",
+		ValidatorMediaTypeManifest:     "image-manifest-schema.json",
+		ValidatorMediaTypeImageIndex:   "image-index-schema.json",
+		ValidatorMediaTypeImageConfig:  "config-schema.json",
 	}
 
-	// specs maps OCI schema media types to schema URIs.
-	// These URIs are expected to be used only by fsLoaderFactory (which trims schemaNamespaces defined above)
-	// and should never cause a network access.
-	specs = map[Validator]string{
-		ValidatorMediaTypeDescriptor:   "https://opencontainers.org/schema/content-descriptor.json",
-		ValidatorMediaTypeLayoutHeader: "https://opencontainers.org/schema/image/image-layout-schema.json",
-		ValidatorMediaTypeManifest:     "https://opencontainers.org/schema/image/image-manifest-schema.json",
-		ValidatorMediaTypeImageIndex:   "https://opencontainers.org/schema/image/image-index-schema.json",
-		ValidatorMediaTypeImageConfig:  "https://opencontainers.org/schema/image/config-schema.json",
+	// specURLs lists the various URLs a given spec may be known by.
+	// This is generated from the "id" value in each spec and relative ref values they contain.
+	specURLs = map[string][]string{
+		"config-schema.json": {
+			"https://opencontainers.org/schema/image/config",
+		},
+		"content-descriptor.json": {
+			"https://opencontainers.org/schema/descriptor",
+			"https://opencontainers.org/schema/image/content-descriptor.json",
+		},
+		"defs-descriptor.json": {
+			"https://opencontainers.org/schema/image/descriptor/mediaType",
+			"https://opencontainers.org/schema/defs-descriptor.json",
+			"https://opencontainers.org/schema/image/defs-descriptor.json",
+		},
+		"defs.json": {
+			"https://opencontainers.org/schema/defs.json",
+			"https://opencontainers.org/schema/image/defs.json",
+			"https://opencontainers.org/schema/image/descriptor/defs.json",
+		},
+		"image-index-schema.json": {
+			"https://opencontainers.org/schema/image/index",
+		},
+		"image-layout-schema.json": {
+			"https://opencontainers.org/schema/image/layout",
+		},
+		"image-manifest-schema.json": {
+			"https://opencontainers.org/schema/image/manifest",
+		},
 	}
 )
 
 // FileSystem returns an in-memory filesystem including the schema files.
 // The schema files are located at the root directory.
 func FileSystem() http.FileSystem {
-	return fs
+	return http.FS(specFS)
 }

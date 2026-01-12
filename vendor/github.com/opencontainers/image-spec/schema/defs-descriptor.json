@@ -4,7 +4,7 @@
     "mediaType": {
       "id": "https://opencontainers.org/schema/image/descriptor/mediaType",
       "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&-^_.+]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&-^_.+]{0,126}$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$"
     },
     "digest": {
       "description": "the cryptographic checksum digest of the object, in the pattern '<algorithm>:<encoded>'",

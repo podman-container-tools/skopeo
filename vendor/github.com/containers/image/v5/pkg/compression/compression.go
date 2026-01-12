@@ -10,7 +10,6 @@ import (
 	"github.com/containers/image/v5/pkg/compression/types"
 	"github.com/containers/storage/pkg/chunked/compressor"
 	"github.com/klauspost/pgzip"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/ulikunitz/xz"
 )
@@ -20,19 +19,19 @@ type Algorithm = types.Algorithm
 
 var (
 	// Gzip compression.
-	Gzip = internal.NewAlgorithm(types.GzipAlgorithmName, types.GzipAlgorithmName,
+	Gzip = internal.NewAlgorithm(types.GzipAlgorithmName, "",
 		[]byte{0x1F, 0x8B, 0x08}, GzipDecompressor, gzipCompressor)
 	// Bzip2 compression.
-	Bzip2 = internal.NewAlgorithm(types.Bzip2AlgorithmName, types.Bzip2AlgorithmName,
+	Bzip2 = internal.NewAlgorithm(types.Bzip2AlgorithmName, "",
 		[]byte{0x42, 0x5A, 0x68}, Bzip2Decompressor, bzip2Compressor)
 	// Xz compression.
-	Xz = internal.NewAlgorithm(types.XzAlgorithmName, types.XzAlgorithmName,
+	Xz = internal.NewAlgorithm(types.XzAlgorithmName, "",
 		[]byte{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, XzDecompressor, xzCompressor)
 	// Zstd compression.
-	Zstd = internal.NewAlgorithm(types.ZstdAlgorithmName, types.ZstdAlgorithmName,
+	Zstd = internal.NewAlgorithm(types.ZstdAlgorithmName, "",
 		[]byte{0x28, 0xb5, 0x2f, 0xfd}, ZstdDecompressor, zstdCompressor)
-	// Zstd:chunked compression.
-	ZstdChunked = internal.NewAlgorithm(types.ZstdChunkedAlgorithmName, types.ZstdAlgorithmName, /* Note: InternalUnstableUndocumentedMIMEQuestionMark is not ZstdChunkedAlgorithmName */
+	// ZstdChunked is a Zstd compression with chunk metadata which allows random access to individual files.
+	ZstdChunked = internal.NewAlgorithm(types.ZstdChunkedAlgorithmName, types.ZstdAlgorithmName,
 		nil, ZstdDecompressor, compressor.ZstdCompressor)
 
 	compressionAlgorithms = map[string]Algorithm{
@@ -100,8 +99,18 @@ func CompressStream(dest io.Writer, algo Algorithm, level *int) (io.WriteCloser,
 	return internal.AlgorithmCompressor(algo)(dest, m, level)
 }
 
-// CompressStreamWithMetadata returns the compressor by its name.  If the compression
-// generates any metadata, it is written to the provided metadata map.
+// CompressStreamWithMetadata returns the compressor by its name.
+//
+// Compressing a stream may create integrity data that allows consuming the compressed byte stream
+// while only using subsets of the compressed data (if the compressed data is seekable and most
+// of the uncompressed data is already present via other means), while still protecting integrity
+// of the compressed stream against unwanted modification. (In OCI container images, this metadata
+// is usually carried in manifest annotations.)
+//
+// Such a partial decompression is not implemented by this package; it is consumed e.g. by
+// github.com/containers/storage/pkg/chunked .
+//
+// If the compression generates such metadata, it is written to the provided metadata map.
 func CompressStreamWithMetadata(dest io.Writer, metadata map[string]string, algo Algorithm, level *int) (io.WriteCloser, error) {
 	return internal.AlgorithmCompressor(algo)(dest, metadata, level)
 }
@@ -151,13 +160,13 @@ func DetectCompression(input io.Reader) (DecompressorFunc, io.Reader, error) {
 func AutoDecompress(stream io.Reader) (io.ReadCloser, bool, error) {
 	decompressor, stream, err := DetectCompression(stream)
 	if err != nil {
-		return nil, false, errors.Wrapf(err, "detecting compression")
+		return nil, false, fmt.Errorf("detecting compression: %w", err)
 	}
 	var res io.ReadCloser
 	if decompressor != nil {
 		res, err = decompressor(stream)
 		if err != nil {
-			return nil, false, errors.Wrapf(err, "initializing decompression")
+			return nil, false, fmt.Errorf("initializing decompression: %w", err)
 		}
 	} else {
 		res = io.NopCloser(stream)

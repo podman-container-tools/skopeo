@@ -1,4 +1,4 @@
-// Copyright (c) 2021, Sylabs Inc. All rights reserved.
+// Copyright (c) 2021-2024, Sylabs Inc. All rights reserved.
 // This software is licensed under a 3-clause BSD license. Please consult the
 // LICENSE file distributed with the sources of this project regarding your
 // rights to use or distribute this software.
@@ -8,6 +8,8 @@ package sif
 import (
 	"errors"
 	"fmt"
+
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 // ErrNoObjects is the error returned when an image contains no data objects.
@@ -92,6 +94,16 @@ func WithPartitionType(pt PartType) DescriptorSelectorFunc {
 	}
 }
 
+// WithOCIBlobDigest selects descriptors that contain a OCI blob with the specified digest.
+func WithOCIBlobDigest(digest v1.Hash) DescriptorSelectorFunc {
+	return func(d Descriptor) (bool, error) {
+		if h, err := d.OCIBlobDigest(); err == nil {
+			return h.String() == digest.String(), nil
+		}
+		return false, nil
+	}
+}
+
 // descriptorFromRaw populates a Descriptor from rd.
 func (f *FileImage) descriptorFromRaw(rd *rawDescriptor) Descriptor {
 	return Descriptor{
@@ -172,10 +184,16 @@ func multiSelectorFunc(fns ...DescriptorSelectorFunc) DescriptorSelectorFunc {
 	}
 }
 
+var errNilSelectFunc = errors.New("descriptor selector func must not be nil")
+
 // withDescriptors calls onMatchFn with each in-use descriptor in f for which selectFn returns
 // true. If selectFn or onMatchFn return a non-nil error, the iteration halts, and the error is
 // returned to the caller.
 func (f *FileImage) withDescriptors(selectFn DescriptorSelectorFunc, onMatchFn func(*rawDescriptor) error) error {
+	if selectFn == nil {
+		return errNilSelectFunc
+	}
+
 	for i, d := range f.rds {
 		if !d.Used {
 			continue
