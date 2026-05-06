@@ -1,23 +1,34 @@
-prepare:
-    - name: dependencies
-      how: install
-      package: [ golang, go-md2man, gpgme-devel, podman-docker ]
+/:
+    summary: Common configuration for no-rpm tests
+    prepare:
+        - name: dependencies
+          how: install
+          package: [ golang, go-md2man, gpgme-devel, podman-docker ]
+    discover:
+        keep-git-metadata: true
+        how: shell
+    execute:
+        how: tmt
 
-discover:
-    keep-git-metadata: true
-    how: shell
-    tests:
-        - name: /validate
-          test: >
-            make tools &&
-            make BUILDTAGS="exclude_graphdriver_btrfs" validate-local &&
-            make validate-docs &&
-            make vendor &&
-            hack/tree_status.sh
-        - name: /integration
-          test: make BUILDTAGS="exclude_graphdriver_btrfs" test-integration
-        - name: /unit
-          test: make BUILDTAGS="exclude_graphdriver_btrfs" test-unit-local
+/validate:
+    discover+:
+        tests:
+            - name: /validate
+              test: >
+                make tools &&
+                make BUILDTAGS="exclude_graphdriver_btrfs" validate-local &&
+                make validate-docs &&
+                make vendor &&
+                hack/tree_status.sh
 
-execute:
-    how: tmt
+/unit:
+    discover+:
+        tests:
+            - name: /unit
+              test: make BUILDTAGS="exclude_graphdriver_btrfs" test-unit-local
+
+/integration:
+    discover+:
+        tests:
+            - name: /integration
+              test: make BUILDTAGS="exclude_graphdriver_btrfs" test-integration
