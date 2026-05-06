@@ -13,25 +13,15 @@ merge_pr_in_ci: false
 jobs:
   - job: copr_build
     trigger: pull_request
-    notifications: &packit_failure_notification
+    notifications:
       failure_comment:
         message: "Packit jobs failed. @containers/packit-build please check."
-    enable_net: true
-    targets:
-      - epel-10-x86_64
-      - epel-10-aarch64
-    actions:
-      post-upstream-clone: "curl --fail -O https://gitlab.com/redhat/centos-stream/rpms/skopeo/-/raw/c10s/skopeo.spec"
-
-  - job: copr_build
-    trigger: pull_request
-    notifications: *packit_failure_notification
-    enable_net: true
     targets:
       - epel-9-x86_64
       - epel-9-aarch64
-    actions:
-      post-upstream-clone: "curl --fail -O https://gitlab.com/redhat/centos-stream/rpms/skopeo/-/raw/c9s/skopeo.spec"
+      - epel-10-x86_64
+      - epel-10-aarch64
+    enable_net: true
 
   - job: tests
     trigger: pull_request
