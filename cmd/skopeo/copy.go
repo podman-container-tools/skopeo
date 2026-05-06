@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	encconfig "github.com/containers/ocicrypt/config"
 	enchelpers "github.com/containers/ocicrypt/helpers"
@@ -17,6 +18,7 @@ import (
 	"go.podman.io/image/v5/manifest"
 	"go.podman.io/image/v5/transports"
 	"go.podman.io/image/v5/transports/alltransports"
+	"go.podman.io/image/v5/types"
 )
 
 type copyOptions struct {
@@ -36,6 +38,7 @@ type copyOptions struct {
 	encryptionKeys      []string                  // Keys needed to encrypt the image
 	decryptionKeys      []string                  // Keys needed to decrypt the image
 	imageParallelCopies uint                      // Maximum number of parallel requests when copying images
+	progressInterval    time.Duration             // interval for CI progress output; 0 = auto-detect
 }
 
 func copyCmd(global *globalOptions) *cobra.Command {
@@ -85,6 +88,7 @@ See skopeo(1) section "IMAGE NAMES" for the expected format
 	flags.IntSliceVar(&opts.encryptLayer, "encrypt-layer", []int{}, "*Experimental* the 0-indexed layer indices, with support for negative indexing (e.g. 0 is the first layer, -1 is the last layer)")
 	flags.StringSliceVar(&opts.decryptionKeys, "decryption-key", []string{}, "*Experimental* key needed to decrypt the image")
 	flags.UintVar(&opts.imageParallelCopies, "image-parallel-copies", 0, "Maximum number of image layers to be copied (pulled/pushed) simultaneously. Not setting this field will fall back to containers/image defaults.")
+	flags.DurationVar(&opts.progressInterval, "progress-interval", 0, "Interval for periodic progress lines when stderr is not a TTY (default: 30s; auto-detected; suppressed by --quiet)")
 	return cmd
 }
 
@@ -181,6 +185,10 @@ func (opts *copyOptions) run(args []string, stdout io.Writer) (retErr error) {
 		stdout = nil
 	}
 
+	if !opts.quiet {
+		opts.progressInterval = resolveProgressInterval(opts.progressInterval)
+	}
+
 	imageListSelection := copy.CopySystemImage
 	var instancePlatforms []copy.InstancePlatformFilter
 	if opts.multiArch.Present() && opts.all {
@@ -258,7 +266,17 @@ func (opts *copyOptions) run(args []string, stdout io.Writer) (retErr error) {
 	copyOpts.MaxParallelDownloads = opts.imageParallelCopies
 	copyOpts.ForceCompressionFormat = opts.destImage.forceCompressionFormat
 
+	if opts.progressInterval > 0 {
+		copyOpts.ProgressInterval = opts.progressInterval
+		copyOpts.ReportWriter = nil // suppress TTY bar when logging to stderr
+	}
+
 	return retry.IfNecessary(ctx, func() error {
+		if opts.progressInterval > 0 {
+			ch := make(chan types.ProgressProperties, 16)
+			copyOpts.Progress = ch
+			go runProgressConsumer(ch, opts.progressInterval, os.Stderr)
+		}
 		manifestBytes, err := copy.Image(ctx, policyContext, destRef, srcRef, copyOpts)
 		if err != nil {
 			return err

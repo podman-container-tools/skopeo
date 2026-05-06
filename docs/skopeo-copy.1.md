@@ -243,6 +243,10 @@ The password to access the destination registry.
 
 Maximum number of image layers to be copied (pulled/pushed) simultaneously. Not setting this field will fall back to containers/image defaults.
 
+**--progress-interval** _duration_
+
+Interval between progress log lines when stderr is not a TTY. Accepts Go duration strings such as `30s` or `1m`. Not setting this field defaults to 30s in non-TTY environments, and disabled in TTY environments.
+
 ## EXAMPLES
 
 To just copy an image from one registry to another:

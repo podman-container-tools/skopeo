@@ -9,6 +9,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/containers/ocicrypt v1.3.0
 	github.com/docker/distribution v2.8.3+incompatible
+	github.com/docker/go-units v0.5.0
 	github.com/moby/sys/capability v0.4.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.2-0.20260226102121-a4c6ade7bb82
@@ -44,7 +45,6 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/docker-credential-helpers v0.9.6 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect
-	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
