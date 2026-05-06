@@ -5,7 +5,7 @@
 downstream_package_name: skopeo
 upstream_tag_template: v{version}
 
-specfile_path: skopeo.spec
+specfile_path: rpm/skopeo.spec
 
 # Disable automatic merging for Copr builds (and subsequent Testing Farm)
 merge_pr_in_ci: false
