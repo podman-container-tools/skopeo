@@ -27,7 +27,7 @@ GOARCH ?= $(shell go env GOARCH)
 # N/B: This value is managed by Renovate, manual changes are
 # possible, as long as they don't disturb the formatting
 # (i.e. DO NOT ADD A 'v' prefix!)
-GOLANGCI_LINT_VERSION := 1.59.1
+GOLANGCI_LINT_VERSION := 1.64.2
 
 ifeq ($(GOBIN),)
 GOBIN := $(GOPATH)/bin
