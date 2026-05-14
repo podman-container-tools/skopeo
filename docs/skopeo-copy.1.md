@@ -63,6 +63,16 @@ Preserve the digests during copying. Fail if the digest cannot be preserved.
 
 This option does not change what will be copied; consider using `--all` at the same time.
 
+**--download-foreign-layers**
+
+Download nondistributable (foreign) layers during copying.
+
+**--download-foreign-layers**
+
+Download nondistributable ("foreign") layers and rewrite them as distributable in the destination manifest. By default, foreign-layer references are preserved as URLs to the original location.
+
+Some registries may not support foreign layers, in which case this option will fail.
+
 **--encrypt-layer** _ints_
 
 *Experimental* the 0-indexed layer indices, with support for negative indexing (e.g. 0 is the first layer, -1 is the last layer)
