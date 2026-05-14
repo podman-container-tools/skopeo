@@ -90,9 +90,9 @@ This option does not change what will be copied; consider using `--all` at the s
 
 **--download-foreign-layers**
 
-Download nondistributable ("foreign") layers and rewrite them as distributable in the destination manifest. By default, foreign-layer references are preserved as URLs to the original location.
+Download layer contents for nondistributable ("foreign") layers — e.g. Windows base layers — that would otherwise be skipped in favor of URL references to their original location. By default, foreign layers are not downloaded.
 
-Some registries may not support foreign layers, in which case this option will fail.
+Useful for air-gapped or offline copies of images whose original source may later become unreachable. The destination manifest is not rewritten: layers retain their original nondistributable media type and `urls` field.
 
 **--remove-signatures** Do not copy signatures, if any, from _source-image_. This is necessary when copying a signed image to a destination which does not support signatures.
 
