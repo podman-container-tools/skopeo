@@ -8,3 +8,8 @@ result
 
 # Ignore the bin directory
 bin
+
+# CVE remediation harness artifacts
+.cve-*.json
+.cve-*.jsonl
+cve-fixes-*.log
