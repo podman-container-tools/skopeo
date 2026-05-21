@@ -21,7 +21,44 @@ skopeo -- Command line utility used to interact with local and remote container 
 `skopeo` can delete container images from a remote container registry.
 
 Note: `skopeo` does not require any container runtimes to be running, to do most of
-its functionality.  It also does not require root, unless you are copying images into a container runtime storage backend, like the docker daemon or github.com/containers/storage.
+its functionality.  It also does not require root for most operations; see [PRIVILEGES](#privileges) below.
+
+## PRIVILEGES
+
+Most `skopeo` operations do not require root. In particular, the `docker://`,
+`dir:`, `oci:`, `docker-archive:`, `oci-archive:`, `sif:`, and `tarball:`
+transports use only network access and ordinary filesystem permissions.
+
+The two cases that may need elevated privileges are the transports that
+interact with a local container runtime:
+
+  * **`containers-storage:`** — The system-wide container store defaults to
+    `/var/lib/containers/storage` for image data and `/run/containers/storage`
+    for run-time data, neither of which is writable by an unprivileged user.
+    When the calling user lacks the capabilities needed to populate this store
+    (`CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_FSETID`, `CAP_MKNOD`,
+    `CAP_SETFCAP`, `CAP_SYS_ADMIN`), `skopeo` automatically re-executes itself
+    inside a user namespace and operates on a per-user store rooted at
+    `$XDG_DATA_HOME/containers/storage` (commonly
+    `~/.local/share/containers/storage`) with run-time data under
+    `$XDG_RUNTIME_DIR/containers`. This user-namespace fallback is triggered
+    only for this transport.
+
+  * **`docker-daemon:`** — Communication with the Docker daemon uses
+    `unix:///var/run/docker.sock` by default (override with the `DOCKER_HOST`
+    environment variable or `--daemon-host`). Access to this socket is
+    controlled by the daemon's configuration, not by `skopeo`.
+
+`skopeo login` and `skopeo logout` write credentials to a per-user
+authentication file. On Linux this defaults to
+`$XDG_RUNTIME_DIR/containers/auth.json`, falling back to
+`/run/containers/$UID/auth.json` when `XDG_RUNTIME_DIR` is unset. Neither
+command requires root.
+
+The system trust policy (`/etc/containers/policy.json`) and registry
+configuration directory (`/etc/containers/registries.d/`) are only read by
+`skopeo`; modifying them is outside `skopeo`'s scope and is governed by the
+usual filesystem permissions on those paths.
 
 ## IMAGE NAMES
 Most commands refer to container images, using a _transport_`:`_details_ format. The following formats are supported:
