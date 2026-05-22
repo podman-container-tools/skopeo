@@ -9,7 +9,7 @@
 
 `skopeo` is a command line utility that performs various operations on container images and image repositories.
 
-`skopeo` does not require the user to be running as root to do most of its operations. The main exceptions are the `containers-storage:` and `docker-daemon:` transports; see the PRIVILEGES section of [skopeo(1)](./docs/skopeo.1.md) for details.
+`skopeo` does not require the user to be running as root to do most of its operations. The main exceptions are the `containers-storage:` and `docker-daemon:` transports; see the PRIVILEGES section of [skopeo(1)](./docs/skopeo.1.md#privileges) for details.
 
 `skopeo` does not require a daemon to be running to perform its operations.
 
