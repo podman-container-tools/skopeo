@@ -180,27 +180,8 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 		Env:           imgInspect.Env,
 	}
 	// Surface the image's Comment field (matching `docker inspect` / `podman inspect`).
-	// Docker schema 2 image configs carry a top-level "comment"; OCI configs don't, but
-	// some toolchains still populate it. Fall back to the last non-empty history
-	// comment, which is what built-with-tools like `buildah commit` set.
 	if rawConfig, err := img.ConfigBlob(ctx); err == nil {
-		var cfg struct {
-			Comment string `json:"comment,omitempty"`
-			History []struct {
-				Comment string `json:"comment,omitempty"`
-			} `json:"history,omitempty"`
-		}
-		if json.Unmarshal(rawConfig, &cfg) == nil {
-			outputData.Comment = cfg.Comment
-			if outputData.Comment == "" {
-				for i := len(cfg.History) - 1; i >= 0; i-- {
-					if cfg.History[i].Comment != "" {
-						outputData.Comment = cfg.History[i].Comment
-						break
-					}
-				}
-			}
-		}
+		outputData.Comment = commentFromConfigBlob(rawConfig)
 	}
 	outputData.Digest, err = manifestDigestFromManifest(rawManifest, img, opts.manifestDigest)
 	if err != nil {
@@ -305,4 +286,31 @@ func (a *algorithmValue) String() string {
 
 func (a *algorithmValue) Type() string {
 	return "algorithm"
+}
+
+// commentFromConfigBlob extracts the image's Comment from a parsed image config
+// JSON blob. Prefers the top-level "comment" field (Docker schema 2 /
+// Schema2V1Image) and falls back to the last non-empty history-entry comment
+// (which is what `buildah commit --history-comment` / `buildah config
+// --history-comment` set on OCI configs). Returns "" if the blob is unparseable
+// or carries no comment.
+func commentFromConfigBlob(rawConfig []byte) string {
+	var cfg struct {
+		Comment string `json:"comment,omitempty"`
+		History []struct {
+			Comment string `json:"comment,omitempty"`
+		} `json:"history,omitempty"`
+	}
+	if json.Unmarshal(rawConfig, &cfg) != nil {
+		return ""
+	}
+	if cfg.Comment != "" {
+		return cfg.Comment
+	}
+	for i := len(cfg.History) - 1; i >= 0; i-- {
+		if cfg.History[i].Comment != "" {
+			return cfg.History[i].Comment
+		}
+	}
+	return ""
 }
