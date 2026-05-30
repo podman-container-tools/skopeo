@@ -179,6 +179,29 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 		LayersData:    imgInspect.LayersData,
 		Env:           imgInspect.Env,
 	}
+	// Surface the image's Comment field (matching `docker inspect` / `podman inspect`).
+	// Docker schema 2 image configs carry a top-level "comment"; OCI configs don't, but
+	// some toolchains still populate it. Fall back to the last non-empty history
+	// comment, which is what built-with-tools like `buildah commit` set.
+	if rawConfig, err := img.ConfigBlob(ctx); err == nil {
+		var cfg struct {
+			Comment string `json:"comment,omitempty"`
+			History []struct {
+				Comment string `json:"comment,omitempty"`
+			} `json:"history,omitempty"`
+		}
+		if json.Unmarshal(rawConfig, &cfg) == nil {
+			outputData.Comment = cfg.Comment
+			if outputData.Comment == "" {
+				for i := len(cfg.History) - 1; i >= 0; i-- {
+					if cfg.History[i].Comment != "" {
+						outputData.Comment = cfg.History[i].Comment
+						break
+					}
+				}
+			}
+		}
+	}
 	outputData.Digest, err = manifestDigestFromManifest(rawManifest, img, opts.manifestDigest)
 	if err != nil {
 		return fmt.Errorf("Error computing manifest digest: %w", err)

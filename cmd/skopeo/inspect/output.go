@@ -16,6 +16,7 @@ type Output struct {
 	RepoTags      []string
 	Created       *time.Time
 	DockerVersion string
+	Comment       string `json:",omitempty"`
 	Labels        map[string]string
 	Architecture  string
 	Os            string
