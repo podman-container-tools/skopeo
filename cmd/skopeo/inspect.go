@@ -178,6 +178,7 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 		Layers:        imgInspect.Layers,
 		LayersData:    imgInspect.LayersData,
 		Env:           imgInspect.Env,
+		Comment:       imgInspect.Comment,
 	}
 	outputData.Digest, err = manifestDigestFromManifest(rawManifest, img, opts.manifestDigest)
 	if err != nil {

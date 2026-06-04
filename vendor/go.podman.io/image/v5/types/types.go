@@ -487,6 +487,7 @@ type ImageInspectInfo struct {
 	LayersData    []ImageInspectLayer
 	Env           []string
 	Author        string
+	Comment       string
 }
 
 // ImageInspectLayer is a set of metadata describing an image layers' detail

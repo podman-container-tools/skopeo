@@ -272,6 +272,10 @@ func (m *Schema2) Inspect(configGetter func(types.BlobInfo) ([]byte, error)) (*t
 		return nil, err
 	}
 	layerInfos := m.LayerInfos()
+	comment := s2.Comment
+	if len(comment) == 0 && len(s2.History) > 0 {
+		comment = s2.History[len(s2.History)-1].Comment
+	}
 	i := &types.ImageInspectInfo{
 		Tag:           "",
 		Created:       &s2.Created,
@@ -282,6 +286,7 @@ func (m *Schema2) Inspect(configGetter func(types.BlobInfo) ([]byte, error)) (*t
 		Layers:        layerInfosToStrings(layerInfos),
 		LayersData:    imgInspectLayersFromLayerInfos(layerInfos),
 		Author:        s2.Author,
+		Comment:       comment,
 	}
 	if s2.Config != nil {
 		i.Labels = s2.Config.Labels

@@ -22,4 +22,5 @@ type Output struct {
 	Layers        []string
 	LayersData    []types.ImageInspectLayer
 	Env           []string
+	Comment       string
 }

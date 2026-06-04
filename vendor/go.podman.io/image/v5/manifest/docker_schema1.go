@@ -253,6 +253,7 @@ func (m *Schema1) Inspect(_ func(types.BlobInfo) ([]byte, error)) (*types.ImageI
 		Layers:        layerInfosToStrings(layerInfos),
 		LayersData:    imgInspectLayersFromLayerInfos(layerInfos),
 		Author:        s1.Author,
+		Comment:       s1.Comment,
 	}
 	if s1.Config != nil {
 		i.Labels = s1.Config.Labels

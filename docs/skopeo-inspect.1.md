@@ -138,7 +138,8 @@ $ skopeo inspect docker://docker.io/fedora
         "DISTTAG=f37container",
         "FGC=f37",
         "FBR=f37"
-    ]
+    ],
+    "Comment": "some comment"
 }
 ```
 
