@@ -63,7 +63,7 @@ jobs:
         run: dnf remove -y skopeo
       - name: build + install
         run: |
-          make BUILDTAGS=containers_image_openpgp bin/skopeo
+          make BUILDTAGS=containers_image_openpgp bin/skopeo completions
           make BUILDTAGS=containers_image_openpgp install PREFIX=/usr/local
       - run: make BUILDTAGS=containers_image_openpgp validate-docs
 
@@ -143,7 +143,7 @@ jobs:
       - run: make vendor
       - name: build + install
         run: |
-          make "BUILDTAGS=${{ matrix.buildtags }}" bin/skopeo
+          make "BUILDTAGS=${{ matrix.buildtags }}" bin/skopeo completions
           make "BUILDTAGS=${{ matrix.buildtags }}" install PREFIX=/usr/local
       - run: make "BUILDTAGS=${{ matrix.buildtags }}" test-unit-local
       - run: make "BUILDTAGS=${{ matrix.buildtags }}" test-integration-local

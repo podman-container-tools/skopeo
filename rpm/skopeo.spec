@@ -138,7 +138,7 @@ export BUILDTAGS="$BUILDTAGS containers_image_sequoia"
 LDFLAGS=''
 
 %gobuild -o bin/%{name} ./cmd/%{name}
-%{__make} docs
+%{__make} docs completions
 
 %install
 make \

@@ -97,7 +97,7 @@ endif
 #     Note: Uses the -N -l go compiler options to disable compiler optimizations
 #           and inlining. Using these build options allows you to subsequently
 #           use source debugging tools like delve.
-all: bin/skopeo docs
+all: bin/skopeo docs completions
 
 codespell:
 	codespell -S Makefile,build,buildah,buildah.spec,imgtype,copy,AUTHORS,bin,vendor,.git,go.sum,CHANGELOG.md,changelog.txt,seccomp.json,"*.xz,*.gz,*.tar,*.tgz,*ico,*.png,*.1,*.5,*.orig,*.rej" -L fpr,uint,iff,od,ERRO -w
@@ -153,7 +153,7 @@ clean:
 
 install: install-binary install-docs install-completions
 
-install-binary: bin/skopeo
+install-binary:
 	install -d -m 755 ${DESTDIR}${BINDIR}
 	install -m 755 bin/skopeo ${DESTDIR}${BINDIR}/skopeo
 
@@ -163,7 +163,7 @@ ifneq ($(DISABLE_DOCS), 1)
 	install -m 644 docs/*.1 ${DESTDIR}${MANDIR}/man1
 endif
 
-install-completions: completions
+install-completions:
 	install -d -m 755 ${DESTDIR}${BASHINSTALLDIR}
 	install -m 644 completions/bash/skopeo ${DESTDIR}${BASHINSTALLDIR}
 	install -d -m 755 ${DESTDIR}${ZSHINSTALLDIR}
