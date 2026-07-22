@@ -53,9 +53,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: make tools
+      - run: git config get --all --global safe.directory
       - run: make validate-local
       - name: vendor + tree status
         run: |
@@ -72,8 +70,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: remove pre-installed skopeo package
         run: dnf remove -y skopeo
       - name: build + install
@@ -116,15 +112,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: stable
-      - name: configure GOPATH (Makefile resolves GOBIN as $(GOPATH)/bin)
-        run: |
-          GOPATH="$(go env GOPATH)"
-          mkdir -p "$GOPATH/bin"
-          echo "GOPATH=$GOPATH" >> "$GITHUB_ENV"
-          echo "$GOPATH/bin" >> "$GITHUB_PATH"
       - name: brew install gpgme (CGo dep for github.com/proglottis/gpgme)
         run: brew install gpgme
-      - run: make tools
+      - run: git config get --all --global safe.directory
       - run: make validate-local test-unit-local bin/skopeo
       - run: ./bin/skopeo -v
 
@@ -153,8 +143,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: make vendor
       - name: build + install
         run: |
@@ -179,8 +167,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: install rustup stable
         run: |
           dnf remove -y rust

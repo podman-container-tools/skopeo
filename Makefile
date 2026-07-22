@@ -21,6 +21,9 @@ FISHINSTALLDIR=${PREFIX}/share/fish/vendor_completions.d
 
 GO ?= go
 GOBIN := $(shell $(GO) env GOBIN)
+ifeq ($(GOBIN),)
+GOBIN := $(shell $(GO) env GOPATH)/bin
+endif
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
@@ -30,10 +33,6 @@ SEQUOIA_SONAME_DIR =
 # possible, as long as they don't disturb the formatting
 # (i.e. DO NOT ADD A 'v' prefix!)
 GOLANGCI_LINT_VERSION := 2.12.2
-
-ifeq ($(GOBIN),)
-GOBIN := $(GOPATH)/bin
-endif
 
 # Scripts may also use CONTAINER_RUNTIME, so we need to export it.
 # Note possibly non-obvious aspects of this:
