@@ -53,8 +53,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: make tools
       - run: make validate-local
       - name: vendor + tree status
@@ -72,8 +70,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: remove pre-installed skopeo package
         run: dnf remove -y skopeo
       - name: build + install
@@ -153,8 +149,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: make vendor
       - name: build + install
         run: |
@@ -179,8 +173,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: fix git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: install rustup stable
         run: |
           dnf remove -y rust
