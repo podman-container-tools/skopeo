@@ -56,6 +56,11 @@ type Endpoint struct {
 	// This can only be set in a registry's Mirror field, not in the registry's primary Endpoint.
 	// This per-mirror setting is allowed only when mirror-by-digest-only is not configured for the primary registry.
 	PullFromMirror string `toml:"pull-from-mirror,omitempty"`
+	// NamespaceProxy enables OCI distribution-spec registry proxying.
+	// When set, an "ns" query parameter with this value is appended to all requests,
+	// allowing a single proxy to route to multiple upstream registries.
+	// See https://github.com/opencontainers/distribution-spec/blob/main/spec.md#registry-proxying
+	NamespaceProxy string `toml:"namespace-proxy,omitempty"`
 }
 
 // rewriteReference will substitute the provided reference `prefix` to the

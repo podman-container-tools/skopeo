@@ -5,7 +5,9 @@ name: Mark stale issues and pull requests
 
 on:
   schedule:
-  - cron: "0 0 * * *"
+  # Do not run at the top of the hour to avoid github action job limits that will drop jobs sometimes.
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
+  - cron: "42 1 * * *"
 
 permissions:
   contents: read
@@ -17,7 +19,7 @@ jobs:
       pull-requests: write  # for actions/stale to close stale PRs
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/stale@v10
+    - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         stale-issue-message: 'A friendly reminder that this issue had no activity for 30 days.'

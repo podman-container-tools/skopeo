@@ -3,6 +3,7 @@ package image
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -189,7 +190,7 @@ func (m *manifestSchema1) convertToManifestSchema2(_ context.Context, options *t
 	// Build a list of the diffIDs for the non-empty layers.
 	diffIDs := []digest.Digest{}
 	var layers []manifest.Schema2Descriptor
-	for v1Index := len(m.m.ExtractedV1Compatibility) - 1; v1Index >= 0; v1Index-- {
+	for v1Index := range slices.Backward(m.m.ExtractedV1Compatibility) {
 		v2Index := (len(m.m.ExtractedV1Compatibility) - 1) - v1Index
 
 		if !m.m.ExtractedV1Compatibility[v1Index].ThrowAway {

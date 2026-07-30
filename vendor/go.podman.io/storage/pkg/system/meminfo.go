@@ -9,6 +9,11 @@ type MemInfo struct {
 	// Amount of free memory.
 	MemFree int64
 
+	// An estimate of how much memory is available for starting new
+	// applications, without swapping.
+	// Set to -1 on platforms where this information is not available.
+	MemAvailable int64
+
 	// Total amount of swap space available.
 	SwapTotal int64
 

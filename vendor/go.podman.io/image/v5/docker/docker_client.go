@@ -108,6 +108,9 @@ type dockerClient struct {
 	signatureBase          lookasideStorageBase
 	useSigstoreAttachments bool
 	scope                  authScope
+	// namespaceProxy enables OCI distribution-spec registry proxying.
+	// When set, an "ns" query parameter is appended to all requests.
+	namespaceProxy string
 
 	// The following members are detected registry properties:
 	// They are set after a successful detectProperties(), and never change afterwards.
@@ -498,6 +501,11 @@ func (c *dockerClient) resolveRequestURL(path string) (*url.URL, error) {
 	res, err := url.Parse(urlString)
 	if err != nil {
 		return nil, err
+	}
+	if c.namespaceProxy != "" {
+		q := res.Query()
+		q.Set("ns", c.namespaceProxy)
+		res.RawQuery = q.Encode()
 	}
 	return res, nil
 }

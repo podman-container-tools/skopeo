@@ -20,13 +20,13 @@ func (s barHeap) Swap(i, j int) {
 	s[j].index = j
 }
 
-func (h *barHeap) Push(x interface{}) {
+func (h *barHeap) Push(x any) {
 	b := x.(*Bar)
 	b.index = h.Len()
 	*h = append(*h, b)
 }
 
-func (h *barHeap) Pop() interface{} {
+func (h *barHeap) Pop() any {
 	s := *h
 	i := s.Len() - 1
 	b := s[i]

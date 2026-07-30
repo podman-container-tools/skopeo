@@ -63,7 +63,7 @@ func (s *medianWindow) Value() float64 {
 }
 
 func (s *medianWindow) Set(value float64) {
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		s[i] = value
 	}
 }

@@ -33,7 +33,7 @@ const (
 	// A repository containing multiple tags, some of which are for
 	// manifest lists, and which includes a "latest" tag.  We specify the
 	// name here without a tag.
-	pullableRepoWithLatestTag = "registry.k8s.io/pause"
+	pullableRepoWithLatestTag = "quay.io/libpod/k8s-pause"
 )
 
 func TestSync(t *testing.T) {

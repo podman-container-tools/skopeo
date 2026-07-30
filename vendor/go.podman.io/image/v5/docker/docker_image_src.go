@@ -150,6 +150,7 @@ func newImageSourceAttempt(ctx context.Context, sys *types.SystemContext, logica
 		return nil, err
 	}
 	client.tlsClientConfig.InsecureSkipVerify = pullSource.Endpoint.Insecure
+	client.namespaceProxy = pullSource.Endpoint.NamespaceProxy
 
 	s := &dockerImageSource{
 		PropertyMethodsInitialize: impl.PropertyMethods(impl.Properties{

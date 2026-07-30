@@ -1,18 +1,20 @@
 ---
 
 # See also:
-# https://github.com/containers/podman/blob/main/.github/workflows/issue_pr_lock.yml
+# https://github.com/podman-container-tools/podman/blob/main/.github/workflows/issue_pr_lock.yml
 
 on:
   schedule:
-    - cron:  '0 0 * * *'
+    # Do not run at the top of the hour to avoid github action job limits that will drop jobs sometimes.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
+    - cron:  '37 1 * * *'
   # Debug: Allow triggering job manually in github-actions WebUI
   workflow_dispatch: {}
 
 jobs:
   # Ref: https://docs.github.com/en/actions/using-workflows/reusing-workflows
   closed_issue_discussion_lock:
-    uses: containers/podman/.github/workflows/issue_pr_lock.yml@main
+    uses: podman-container-tools/podman/.github/workflows/issue_pr_lock.yml@main
     secrets: inherit
     permissions:
       contents: read

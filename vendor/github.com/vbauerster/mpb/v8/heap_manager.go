@@ -23,7 +23,7 @@ const (
 
 type heapRequest struct {
 	cmd  heapCmd
-	data interface{}
+	data any
 }
 
 type pushData struct {
@@ -42,7 +42,7 @@ type fixData struct {
 	lazy     bool
 }
 
-func (m heapManager) run(pwg *sync.WaitGroup, shutdown <-chan interface{}, handOverBarHeap chan<- []*Bar) {
+func (m heapManager) run(pwg *sync.WaitGroup, shutdown <-chan any, handOverBarHeap chan<- []*Bar) {
 	var bHeap barHeap
 	var sync bool
 	var prevLen int
@@ -145,13 +145,13 @@ func (m heapManager) fix(b *Bar, priority int, lazy bool) {
 	m <- heapRequest{cmd: h_fix, data: data}
 }
 
-func syncWidth(matrix map[int][]*decor.Sync, done <-chan interface{}) {
+func syncWidth(matrix map[int][]*decor.Sync, done <-chan any) {
 	for _, column := range matrix {
 		go maxWidthDistributor(column, done)
 	}
 }
 
-func maxWidthDistributor(column []*decor.Sync, done <-chan interface{}) {
+func maxWidthDistributor(column []*decor.Sync, done <-chan any) {
 	var maxWidth int
 	for _, s := range column {
 		select {

@@ -38,9 +38,10 @@ func ReadMemInfo() (*MemInfo, error) {
 		return &MemInfo{}, nil
 	}
 	return &MemInfo{
-		MemTotal:  int64(msi.ullTotalPhys),
-		MemFree:   int64(msi.ullAvailPhys),
-		SwapTotal: int64(msi.ullTotalPageFile),
-		SwapFree:  int64(msi.ullAvailPageFile),
+		MemTotal:     int64(msi.ullTotalPhys),
+		MemFree:      int64(msi.ullAvailPhys),
+		MemAvailable: -1,
+		SwapTotal:    int64(msi.ullTotalPageFile),
+		SwapFree:     int64(msi.ullAvailPageFile),
 	}, nil
 }

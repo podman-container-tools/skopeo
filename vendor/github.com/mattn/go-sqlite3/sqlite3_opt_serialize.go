@@ -60,6 +60,9 @@ func (c *SQLiteConn) Deserialize(b []byte, schema string) error {
 	defer C.free(unsafe.Pointer(zSchema))
 
 	tmpBuf := (*C.uchar)(C.sqlite3_malloc64(C.sqlite3_uint64(len(b))))
+	if tmpBuf == nil && len(b) > 0 {
+		return fmt.Errorf("deserialize failed: out of memory")
+	}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(tmpBuf)), len(b)), b)
 
 	rc := C.sqlite3_deserialize(c.db, zSchema, tmpBuf, C.sqlite3_int64(len(b)),

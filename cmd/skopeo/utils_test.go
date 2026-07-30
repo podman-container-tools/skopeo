@@ -404,6 +404,15 @@ func TestSharedCopyOptionsCopyOptions(t *testing.T) {
 				ForceManifestMIMEType: imgspecv1.MediaTypeImageManifest,
 			},
 		},
+		{ // --remove-list-signatures
+			options: []string{
+				"--remove-list-signatures",
+			},
+			expected: copy.Options{
+				RemoveListSignatures: true,
+				ReportWriter:         &someStdout,
+			},
+		},
 		{ // --sign-passphrase-file + --sign-by work
 			options: []string{
 				"--sign-by", "gpgFingerprint",
@@ -469,7 +478,8 @@ func TestSharedCopyOptionsCopyOptions(t *testing.T) {
 	}
 
 	for _, opts := range [][]string{
-		{"--format", "invalid"}, // Invalid --format
+		{"--format", "invalid"},                             // Invalid --format
+		{"--remove-signatures", "--remove-list-signatures"}, // Mutually exclusive flags
 		// More --sign-by-sigstore-private-key, --sign-by-sigstore failure cases should be tested here.
 		// --sign-passphrase-file + more than one key option
 		{"--sign-by", "gpgFingerprint", "--sign-by-sq-fingerprint", "sqFingerprint", "--sign-passphrase-file", passphraseFile},

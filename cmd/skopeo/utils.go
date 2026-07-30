@@ -332,6 +332,7 @@ func (opts *imageDestOptions) warnAboutIneffectiveOptions(destTransport types.Im
 // sharedCopyOptions collects CLI flags that affect copying images, currently shared between the copy and sync commands.
 type sharedCopyOptions struct {
 	removeSignatures         bool                      // Do not copy signatures from the source image
+	removeListSignatures     bool                      // Do not copy manifest list signatures (preserves per-instance signatures)
 	signByFingerprint        string                    // Sign the image using a GPG key with the specified fingerprint
 	signBySequoiaFingerprint string                    // Sign the image using a Sequoia-PGP key with the specified fingerprint
 	signBySigstoreParamFile  string                    // Sign the image using a sigstore signature per configuration in a param file
@@ -346,6 +347,7 @@ func sharedCopyFlags() (pflag.FlagSet, *sharedCopyOptions) {
 	opts := sharedCopyOptions{}
 	fs := pflag.FlagSet{}
 	fs.BoolVar(&opts.removeSignatures, "remove-signatures", false, "Do not copy signatures from source")
+	fs.BoolVar(&opts.removeListSignatures, "remove-list-signatures", false, "Do not copy manifest list signatures (preserves per-instance signatures)")
 	fs.StringVar(&opts.signByFingerprint, "sign-by", "", "Sign the image using a GPG key with the specified `FINGERPRINT`")
 	fs.StringVar(&opts.signBySequoiaFingerprint, "sign-by-sq-fingerprint", "", "Sign the image using a Sequoia-PGP key with the specified `FINGERPRINT`")
 	fs.StringVar(&opts.signBySigstoreParamFile, "sign-by-sigstore", "", "Sign the image using a sigstore parameter file at `PATH`")
@@ -366,6 +368,10 @@ func (opts *sharedCopyOptions) copyOptions(stdout io.Writer) (*copy.Options, fun
 			return nil, nil, err
 		}
 		manifestType = mt
+	}
+
+	if opts.removeSignatures && opts.removeListSignatures {
+		return nil, nil, fmt.Errorf("Only one of --remove-signatures and --remove-list-signatures can be specified")
 	}
 
 	// c/image/copy.Image does allow creating both simple signing and sigstore signatures simultaneously,
@@ -453,6 +459,7 @@ func (opts *sharedCopyOptions) copyOptions(stdout io.Writer) (*copy.Options, fun
 	succeeded = true
 	return &copy.Options{
 		RemoveSignatures:                 opts.removeSignatures,
+		RemoveListSignatures:             opts.removeListSignatures,
 		Signers:                          signers,
 		SignBy:                           opts.signByFingerprint,
 		SignPassphrase:                   passphrase,

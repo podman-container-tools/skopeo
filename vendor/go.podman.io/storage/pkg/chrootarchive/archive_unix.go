@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -28,6 +29,8 @@ type unpackDestination struct {
 func (dst *unpackDestination) Close() error {
 	return dst.root.Close()
 }
+
+const statusCodeENOSPC = 2
 
 // tarOptionsDescriptor is passed as an extra file
 const tarOptionsDescriptor = 3
@@ -82,6 +85,9 @@ func untar() {
 	}
 
 	if err := archive.Unpack(os.Stdin, dst, &options); err != nil {
+		if errors.Is(err, unix.ENOSPC) {
+			os.Exit(statusCodeENOSPC)
+		}
 		fatal(err)
 	}
 	// fully consume stdin in case it is zero padded
@@ -163,6 +169,14 @@ func invokeUnpack(decompressedArchive io.Reader, dest *unpackDestination, option
 			return fmt.Errorf("%w\nexhausting input failed (error: %w)", errorOut, err)
 		}
 
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			status := exitErr.ExitCode()
+			if status == statusCodeENOSPC {
+				return unix.ENOSPC
+			}
+		}
+
 		return errorOut
 	}
 	return nil
@@ -182,7 +196,7 @@ func tar() {
 		root = src
 	}
 
-	if err := realChroot(root); err != nil {
+	if err := chroot(root); err != nil {
 		fatal(err)
 	}
 

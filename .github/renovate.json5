@@ -20,7 +20,7 @@
    https://docs.renovatebot.com/configuration-options/
 
    Monitoring Dashboard:
-   https://app.renovatebot.com/dashboard#github/containers
+   https://developer.mend.io/github/podman-container-tools
 
    Note: The Renovate bot will create/manage it's business on
          branches named 'renovate/*'.  Otherwise, and by
@@ -38,8 +38,8 @@
 
   // Re-use predefined sets of configuration options to DRY
   "extends": [
-    // https://github.com/containers/automation/blob/main/renovate/defaults.json5
-    "github>containers/automation//renovate/defaults.json5"
+    // https://github.com/podman-container-tools/automation/blob/main/renovate/defaults.json5
+    "github>podman-container-tools/automation//renovate/defaults.json5"
   ],
 
   // Permit automatic rebasing when base-branch changes by more than

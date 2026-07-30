@@ -530,7 +530,7 @@ func (d *Driver) create(id, parent string, opts *graphdriver.CreateOpts, readOnl
 		if err := os.MkdirAll(quotas, 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(path.Join(quotas, id), []byte(fmt.Sprint(quota.size)), 0o644); err != nil {
+		if err := os.WriteFile(path.Join(quotas, id), []byte(strconv.FormatUint(quota.size, 10)), 0o644); err != nil {
 			return err
 		}
 	}

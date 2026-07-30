@@ -90,6 +90,10 @@ This option does not change what will be copied; consider using `--all` at the s
 
 **--remove-signatures** Do not copy signatures, if any, from _source-image_. This is necessary when copying a signed image to a destination which does not support signatures.
 
+**--remove-list-signatures**
+
+Do not copy the manifest list signature while preserving per-instance signatures. This provides more granular control than **--remove-signatures**, which removes all signatures.
+
 **--sign-by** _key-id_
 
 Add a “simple signing” signature using that key ID for an image name corresponding to _destination-image_

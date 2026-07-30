@@ -3,6 +3,7 @@ package mpb
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"math"
 	"strings"
@@ -15,6 +16,8 @@ import (
 
 // Bar represents a progress bar.
 type Bar struct {
+	ctx          context.Context
+	cancel       func()
 	index        int // used by heap
 	priority     int // used by heap
 	frameCh      chan *renderFrame
@@ -22,8 +25,6 @@ type Bar struct {
 	container    *Progress
 	bs           *bState
 	bsOk         chan struct{}
-	ctx          context.Context
-	cancel       func()
 }
 
 type decorSyncTable [2][]*decor.Sync
@@ -43,14 +44,12 @@ type bState struct {
 	ewmaDecorators  []decor.EwmaDecorator
 	filler          BarFiller
 	extender        extenderFunc
-	renderReq       chan<- time.Time
-	waitBar         *Bar // key for (*pState).queueBars
+	waitFor         *Bar // key for (*pState).queueBars
 	trimSpace       bool
 	aborted         bool
 	triggerComplete bool
 	rmOnComplete    bool
 	noPop           bool
-	autoRefresh     bool
 }
 
 type renderFrame struct {
@@ -61,39 +60,43 @@ type renderFrame struct {
 	err          error
 }
 
-// ProxyReader wraps io.Reader with metrics required for progress
-// tracking. If `r` is 'unknown total/size' reader it's mandatory
-// to call `(*Bar).SetTotal(-1, true)` after the wrapper returns
-// `io.EOF`. If bar is already completed or aborted, returns nil.
-// Panics if `r` is nil.
-func (b *Bar) ProxyReader(r io.Reader) io.ReadCloser {
+// ProxyReader wraps io.Reader with metrics required for progress tracking.
+// Panics if `r` is nil. If `r` is io.ReadCloser then calling Close on `pr`
+// will close underlying `r`s io.ReadCloser. If underlying *Bar instance is
+// already completed or aborted then value of `pr` is nil. If underlying
+// *Bar instance was initialized with total <= 0 then it's necessary to call
+// `(*Bar).SetTotal(-1, true)` after copy operation completes. Most of the
+// time it means that there is need to call `(*Bar).SetTotal(-1, true)` after
+// io.Copy(dst, pr) returns.
+func (b *Bar) ProxyReader(r io.Reader) (pr io.ReadCloser) {
 	if r == nil {
-		panic("expected non nil io.Reader")
+		panic(errors.New("expected non nil io.Reader"))
 	}
-	result := make(chan io.ReadCloser, 1)
+	result := make(chan bool, 1)
 	select {
-	case b.operateState <- func(s *bState) {
-		result <- newProxyReader(r, b, len(s.ewmaDecorators) != 0)
-	}:
-		return <-result
+	case b.operateState <- func(s *bState) { result <- len(s.ewmaDecorators) != 0 }:
+		return newProxyReader(r, b, <-result)
 	case <-b.ctx.Done():
 		return nil
 	}
 }
 
 // ProxyWriter wraps io.Writer with metrics required for progress tracking.
-// If bar is already completed or aborted, returns nil.
-// Panics if `w` is nil.
-func (b *Bar) ProxyWriter(w io.Writer) io.WriteCloser {
+// Panics if `w` is nil. If `w` is io.WriteCloser then calling Close on `pw`
+// will close underlying `w`s io.WriteCloser. If underlying *Bar instance is
+// already completed or aborted then value of `pw` is nil. If underlying
+// *Bar instance was initialized with total <= 0 then it's necessary to call
+// `(*Bar).SetTotal(-1, true)` after copy operation completes. Most of the
+// time it means that there is need to call `(*Bar).SetTotal(-1, true)` after
+// io.Copy(pw, src) returns.
+func (b *Bar) ProxyWriter(w io.Writer) (pw io.WriteCloser) {
 	if w == nil {
-		panic("expected non nil io.Writer")
+		panic(errors.New("expected non nil io.Writer"))
 	}
-	result := make(chan io.WriteCloser, 1)
+	result := make(chan bool, 1)
 	select {
-	case b.operateState <- func(s *bState) {
-		result <- newProxyWriter(w, b, len(s.ewmaDecorators) != 0)
-	}:
-		return <-result
+	case b.operateState <- func(s *bState) { result <- len(s.ewmaDecorators) != 0 }:
+		return newProxyWriter(w, b, <-result)
 	case <-b.ctx.Done():
 		return nil
 	}
@@ -166,7 +169,7 @@ func (b *Bar) EnableTriggerComplete() {
 		s.triggerComplete = true
 		if s.current >= s.total {
 			s.current = s.total
-			b.done(s.renderReq, s.autoRefresh)
+			b.done()
 		}
 	}:
 	case <-b.ctx.Done():
@@ -192,7 +195,7 @@ func (b *Bar) SetTotal(total int64, complete bool) {
 		if complete {
 			s.current = s.total
 			s.triggerComplete = true
-			b.done(s.renderReq, s.autoRefresh)
+			b.done()
 		}
 	}:
 	case <-b.ctx.Done():
@@ -209,7 +212,7 @@ func (b *Bar) SetCurrent(current int64) {
 		s.current = current
 		if s.triggerComplete && s.current >= s.total {
 			s.current = s.total
-			b.done(s.renderReq, s.autoRefresh)
+			b.done()
 		}
 	}:
 	case <-b.ctx.Done():
@@ -233,7 +236,7 @@ func (b *Bar) IncrInt64(n int64) {
 		s.current += n
 		if s.triggerComplete && s.current >= s.total {
 			s.current = s.total
-			b.done(s.renderReq, s.autoRefresh)
+			b.done()
 		}
 	}:
 	case <-b.ctx.Done():
@@ -261,7 +264,7 @@ func (b *Bar) EwmaIncrInt64(n int64, iterDur time.Duration) {
 		s.current += n
 		if s.triggerComplete && s.current >= s.total {
 			s.current = s.total
-			b.done(s.renderReq, s.autoRefresh)
+			b.done()
 		}
 	}:
 	case <-b.ctx.Done():
@@ -283,7 +286,7 @@ func (b *Bar) EwmaSetCurrent(current int64, iterDur time.Duration) {
 		s.current = current
 		if s.triggerComplete && s.current >= s.total {
 			s.current = s.total
-			b.done(s.renderReq, s.autoRefresh)
+			b.done()
 		}
 	}:
 	case <-b.ctx.Done():
@@ -320,7 +323,7 @@ func (b *Bar) Abort(drop bool) {
 		s.aborted = true
 		s.rmOnComplete = drop
 		s.triggerComplete = true
-		b.done(s.renderReq, s.autoRefresh)
+		b.done()
 	}:
 	case <-b.ctx.Done():
 	}
@@ -498,33 +501,34 @@ func (s *bState) wSyncTable() (table decorSyncTable) {
 	return table
 }
 
-func (b *Bar) done(renderReq chan<- time.Time, autoRefresh bool) {
-	if autoRefresh {
+func (b *Bar) done() {
+	if b.container.refreshEnabled {
 		// Technically this call isn't required, but if refresh rate is set to
 		// one hour for example and bar completes within a few minutes p.Wait()
 		// will wait for one hour. This call helps to avoid unnecessary waiting.
-		go b.tryEarlyRefresh(renderReq)
+		go b.tryEarlyRefresh()
 	} else {
 		b.cancel()
+		go b.container.runQueuetBar(b)
 	}
 }
 
-func (b *Bar) tryEarlyRefresh(renderReq chan<- time.Time) {
+func (b *Bar) tryEarlyRefresh() {
 	otherRunning := make(chan struct{})
-	ok := b.container.iterateBars(func(bar *Bar) bool {
+	yield := func(bar *Bar) bool {
 		if b != bar && bar.isRunning() {
 			close(otherRunning)
 			return false // stop traverse
 		}
 		return true // continue traverse
-	})
-	if ok {
+	}
+	if err := b.container.iterateBars(yield); err == nil {
 		select {
 		case <-otherRunning:
 		default:
 			for {
 				select {
-				case renderReq <- time.Now():
+				case b.container.renderReq <- time.Now():
 				case <-b.ctx.Done():
 					return
 				}

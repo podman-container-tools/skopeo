@@ -97,6 +97,16 @@ Suppress output information when copying images.
 
 Do not copy signatures, if any, from _source-image_. Necessary when copying a signed image to a destination which does not support signatures.
 
+**--remove-list-signatures**
+
+Do not copy the manifest list signature while preserving per-instance signatures. This provides more granular control than **--remove-signatures**, which removes all signatures.
+
+**--strip-removed-platforms**
+
+When copying only a subset of platforms from a multi-architecture image (using **--multi-arch** with a platform list), write a manifest list containing only the copied platforms, instead of leaving entries that refer to per-platform images not present in the destination. This is useful for registries that reject manifest lists containing references to missing images.
+
+Note: This option requires signatures to be removed using either **--remove-signatures** or **--remove-list-signatures**, as stripping instances invalidates the manifest list signature and changes the manifest list digest. The operation will fail if signatures are present and not explicitly removed.
+
 **--sign-by** _key-id_
 
 Add a “simple signing” signature using that key ID for an image name corresponding to _destination-image_
@@ -271,6 +281,11 @@ $ skopeo copy --sign-by dev@example.com containers-storage:example/busybox:strea
 To copy only specific platforms from a multi-architecture image (creates a sparse manifest list):
 ```console
 $ skopeo copy --multi-arch=linux/amd64,linux/arm64 docker://quay.io/skopeo/stable:latest docker://registry.example.com/skopeo:latest
+```
+
+To copy specific platforms and strip the sparse manifest list (for registries that don't support sparse lists):
+```console
+$ skopeo copy --multi-arch=linux/amd64,linux/arm64 --strip-removed-platforms --remove-list-signatures docker://quay.io/skopeo/stable:latest docker://registry.example.com/skopeo:latest
 ```
 
 To encrypt an image:

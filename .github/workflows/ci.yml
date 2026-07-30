@@ -12,6 +12,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # CI automation repo release for the VM image downloads in ci.sh.
+  # ENV is managed by renovate, do not change the name without
+  # updating the renovate config in the automation repo.
+  AUTOMATION_RELEASE: 20260722t094115z
+
 jobs:
   path-filter:
     runs-on: ubuntu-latest
@@ -20,22 +26,31 @@ jobs:
       all: ${{ steps.filter.outputs.all }}
       code: ${{ steps.filter.outputs.code }}
       docs: ${{ steps.filter.outputs.docs }}
+      AUTOMATION_RELEASE: ${{ steps.automation.outputs.AUTOMATION_RELEASE }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706  # v4.0.2
         id: filter
         with:
           filters: .github/filters.yaml
+      # For some reason github decided that using ${{ env }} is not valid inside a container image name.
+      # As such we must work around this, using outputs there is valid so we need this job to convert the
+      # env into an output. Since we already have the path-filter job we might as well reuse it.
+      - name: set AUTOMATION_RELEASE output
+        id: automation
+        run: echo "AUTOMATION_RELEASE=${AUTOMATION_RELEASE}" >> $GITHUB_OUTPUT
+
 
   validate:
+    needs: path-filter
     runs-on: cncf-ubuntu-4-16-x86
     timeout-minutes: 45
     container:
-      image: ghcr.io/podman-container-tools/skopeo_cidev:20260603t174659z # FIXME: Should be Renovate-managed.
+      image: ghcr.io/podman-container-tools/skopeo_cidev:${{ needs.path-filter.outputs.AUTOMATION_RELEASE }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: fix git safe.directory
@@ -48,13 +63,13 @@ jobs:
           hack/tree_status.sh
 
   doccheck:
-    needs: validate
+    needs: [validate, path-filter]
     runs-on: cncf-ubuntu-4-16-x86
     timeout-minutes: 45
     container:
-      image: ghcr.io/podman-container-tools/skopeo_cidev:20260603t174659z # FIXME: Should be Renovate-managed.
+      image: ghcr.io/podman-container-tools/skopeo_cidev:${{ needs.path-filter.outputs.AUTOMATION_RELEASE }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: fix git safe.directory
@@ -77,10 +92,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: stable
       - run: make BUILDTAGS=containers_image_openpgp local-cross
@@ -95,10 +110,10 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: stable
       - name: configure GOPATH (Makefile resolves GOBIN as $(GOPATH)/bin)
@@ -114,7 +129,7 @@ jobs:
       - run: ./bin/skopeo -v
 
   test_skopeo:
-    needs: validate
+    needs: [validate, path-filter]
     if: >-
       !contains(github.event.pull_request.title || github.event.head_commit.message, '[CI:DOCS]')
       && !contains(github.event.pull_request.title || github.event.head_commit.message, '[CI:BUILD]')
@@ -132,15 +147,14 @@ jobs:
           - name: Skopeo Test w/ Sequoia
             buildtags: containers_image_sequoia
     container:
-      image: ghcr.io/podman-container-tools/skopeo_cidev:20260603t174659z # FIXME: Should be Renovate-managed.
+      image: ghcr.io/podman-container-tools/skopeo_cidev:${{ needs.path-filter.outputs.AUTOMATION_RELEASE }}
       options: --privileged
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: fix git safe.directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: make vendor
       - name: build + install
         run: |
           make "BUILDTAGS=${{ matrix.buildtags }}" bin/skopeo completions
@@ -161,7 +175,7 @@ jobs:
     container:
       image: quay.io/coreos-assembler/fcos-buildroot:testing-devel
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: fix git safe.directory

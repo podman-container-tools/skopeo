@@ -698,7 +698,7 @@ func SupportsNativeOverlay(home, runhome string) (bool, error) {
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return false, err
 		}
-		if err := os.WriteFile(getMountProgramFlagFile(home), []byte(fmt.Sprintf("%t", needsMountProgram)), 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.WriteFile(getMountProgramFlagFile(home), fmt.Appendf(nil, "%t", needsMountProgram), 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return false, err
 		}
 		if needsMountProgram {
@@ -1504,7 +1504,7 @@ func (d *Driver) get(id string, disableShifting bool, options graphdriver.MountO
 
 	readWrite := !inAdditionalStore
 
-	if !d.SupportsShifting(options.UidMaps, options.GidMaps) || options.DisableShifting {
+	if !d.SupportsShifting(options.UidMaps, options.GidMaps) {
 		disableShifting = true
 	}
 
@@ -2242,7 +2242,8 @@ func (d *Driver) ApplyDiffWithDiffer(options *graphdriver.ApplyDiffWithDifferOpt
 	logrus.Debugf("Applying differ in %s", applyDir)
 
 	differOptions := graphdriver.DifferOptions{
-		Format: graphdriver.DifferOutputFormatDir,
+		Format:           graphdriver.DifferOutputFormatDir,
+		StagingDirectory: layerDir,
 	}
 	if d.usingComposefs {
 		differOptions.Format = graphdriver.DifferOutputFormatFlat

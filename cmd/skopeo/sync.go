@@ -25,7 +25,7 @@ import (
 	"go.podman.io/image/v5/manifest"
 	"go.podman.io/image/v5/transports"
 	"go.podman.io/image/v5/types"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // syncOptions contains information retrieved from the skopeo sync command line.

@@ -149,7 +149,7 @@ func (m *SigningMechanism) ImportKeys(blob []byte) ([]string, error) {
 
 	keyIdentities := []string{}
 	count := C.go_sequoia_import_result_get_count(result)
-	for i := C.size_t(0); i < count; i++ {
+	for i := range C.size_t(count) {
 		var cerr *C.SequoiaError
 		cKeyIdentity := C.go_sequoia_import_result_get_content(result, i, &cerr)
 		if cerr != nil {
