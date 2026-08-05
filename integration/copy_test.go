@@ -555,83 +555,68 @@ func (s *copySuite) TestCopySucceedsWhenImageDoesNotMatchRuntimeButWeOverride() 
 		"containers-storage:"+storage+"test")
 }
 
-// TestCopyDownloadForeignLayers verifies that --download-foreign-layers downloads
-// the contents of nondistributable ("foreign") layers into the destination, and
-// that without the flag those layers are skipped. The destination is an oci:
-// layout, which is the case the original feature request (containers/skopeo#545)
-// was filed for: oci: accepts foreign-URL references, so without the flag the
-// library deliberately preserves them in the manifest and skips downloading the
-// blob.
+// TestCopyDownloadForeignLayers verifies the user-visible effect of
+// --download-foreign-layers: with the flag the destination holds the contents of
+// nondistributable ("foreign") layers; without it those layers are skipped in favor of
+// the URL references carried by the source manifest.
 //
-// The library's doc-comment for copy.Options.DownloadForeignLayers also claims to
-// "translate the layer media type to not indicate 'nondistributable'", but
-// empirically this manifest rewrite does not happen for oci: destinations as of
-// the vendored containers/image at the time of this commit: the manifest is
-// byte-identical before and after the flag. This test therefore asserts only the
-// behavior we can observe (blob present vs. absent), leaving manifest contents
-// out of scope. If the upstream library later closes that gap, this test will
-// continue to pass.
-func (s *copySuite) TestCopyDownloadForeignLayers() {
+// The destination is an oci: layout, the case containers/skopeo#545 was filed for: oci:
+// reports AcceptsForeignLayerURLs() == true, so by default the library preserves the URLs
+// and never fetches the blob. Destinations reporting false (dir:, containers-storage:,
+// docker-archive:) download foreign layers with or without this flag.
+//
+// The assertions deliberately never read the "urls" field of the layout written *with* the
+// flag. copy.Options.DownloadForeignLayers is documented to also translate the layer media
+// type to not indicate "nondistributable", which would imply dropping "urls"; as of the
+// vendored containers/image that rewrite does not happen. Keying the with-flag assertion
+// off "urls" would turn a future upstream fix into a test failure. So the foreign layers
+// are identified from the control copy — which cannot lose its URLs, because nothing was
+// downloaded and the URL is the only pointer to the content — and the with-flag layout is
+// then required to be self-contained: every layer it lists is present on disk.
+func (s *copySuite) TestCopyDownloadForeighLayers() {
 	t := s.T()
-	withoutFlag := t.TempDir()
 	withFlag := t.TempDir()
-
-	// Default behavior: oci: accepts foreign URLs, so the manifest preserves them
-	// and the foreign blob is not downloaded.
-	assertSkopeoSucceeds(t, "", "--override-os=windows", "--override-arch=amd64",
-		"copy", "--retry-times", "3", knownWindowsOnlyImage, "oci:"+withoutFlag)
-	assertOCILayoutForeignBlobs(t, withoutFlag, false)
-
-	// With --download-foreign-layers: the foreign blob is fetched into the layout.
-	assertSkopeoSucceeds(t, "", "--override-os=windows", "--override-arch=amd64",
-		"copy", "--retry-times", "3", "--download-foreign-layers", knownWindowsOnlyImage,
-		"oci:"+withFlag)
-	assertOCILayoutForeignBlobs(t, withFlag, true)
-}
-
-// assertOCILayoutForeignBlobs inspects the oci: layout at dir, identifies the
-// foreign layers in its (single) image manifest by the presence of a non-empty
-// urls array, and asserts whether each foreign layer's blob file is present on
-// disk. This is the user-visible effect of --download-foreign-layers.
-func assertOCILayoutForeignBlobs(t *testing.T, dir string, expectPresent bool) {
-	indexBlob, err := os.ReadFile(filepath.Join(dir, "index.json"))
-	require.NoError(t, err)
-	var index struct {
-		Manifests []struct {
-			Digest digest.Digest `json:"digest"`
-		} `json:"manifests"`
-	}
-	require.NoError(t, json.Unmarshal(indexBlob, &index))
-	require.Len(t, index.Manifests, 1, "expected exactly one manifest in oci: index; index: %s", indexBlob)
-
-	manifestDigest := index.Manifests[0].Digest
-	manifestBlob, err := os.ReadFile(filepath.Join(dir, "blobs", manifestDigest.Algorithm().String(), manifestDigest.Encoded()))
-	require.NoError(t, err)
-	var m struct {
-		Layers []struct {
-			Digest digest.Digest `json:"digest"`
-			URLs   []string      `json:"urls,omitempty"`
-		} `json:"layers"`
-	}
-	require.NoError(t, json.Unmarshal(manifestBlob, &m))
-
+	withoutFlag := t.TempDir()
+	assertSkopeoSucceeds(t, "", "--override-os=windows", "--override-arch=amd64", "copy", "--retry-times", "3", knownWindowsOnlyImage, "oci:"+withoutFlag)
 	var foreignDigests []digest.Digest
-	for _, l := range m.Layers {
-		if len(l.URLs) > 0 {
+	for _, l := range ociLayoutLayers(t, withoutFlag) {
+		if len(l.URLs) != 0 {
 			foreignDigests = append(foreignDigests, l.Digest)
 		}
 	}
-	require.NotEmpty(t, foreignDigests, "test image was expected to have at least one foreign layer; manifest: %s", manifestBlob)
-
+	require.NotEmpty(t, foreignDigests, "%s was expected to contain at least one foreign layer", knownWindowsOnlyImage)
 	for _, d := range foreignDigests {
-		blobPath := filepath.Join(dir, "blobs", d.Algorithm().String(), d.Encoded())
-		_, statErr := os.Stat(blobPath)
-		if expectPresent {
-			assert.NoError(t, statErr, "expected foreign-layer blob %s to be present at %s", d, blobPath)
-		} else {
-			assert.True(t, os.IsNotExist(statErr), "expected foreign-layer blob %s to be absent at %s; stat err: %v", d, blobPath, statErr)
-		}
+		assert.NoFileExists(t, ociBlobPath(withoutFlag, d), "foreign layer %s should not be downloaded withou --download-foreign-layers", d)
 	}
+	assertSkopeoSucceeds(t, "", "--override-os=windows", "--override-arch=amd64", "copy", "--retry-times", "3", "--download-foreign-layers", knownWindowsOnlyImage, "oci:"+withFlag)
+	for _, d := range foreignDigests {
+		assert.FileExists(t.ociBlobPath(withFlag, d), "foreign layer %s should be downloaded with --download-foreign-layers", d)
+	}
+	for _, l := range ociLayoutLayers(t, withFlag) {
+		assert.FileExists(t, ociBlobPath(withFlag, l.Digest), "layer %s is missing: the layout is not self-contained", l.Digest)
+	}
+}
+
+// Return the layer descriptors of the single image manifest in the oci:
+// layout at dir.
+func ociLayoutLayers(t *testing.T, dir string) []imgspecv1.Descriptor {
+	indexBlob, err := os.ReadFile(filepath.Join(dir, "index.json"))
+	require.NoError(t, err)
+	var index imgspecv1.Index
+	require.NoError(t, json.Unmarshal(indexBlob, &index))
+	require.Len(t, index.Manifests, 1, "expected exactly one manifest in oci: index; index: %s", indexBlob)
+
+	manifestBlob, err := os.ReadFile(ociBlobPath(dir, index.Manifests[0].Digest))
+	require.NoError(t, err)
+	m, err := manifest.OCI1FromManifest(manifestBlob)
+	require.NoError(t, err)
+	return m.Layers
+}
+
+// Returns the on-disk path of the blob witht he digest d in the oci: layout
+// at dir.
+func ociBlobPath(dir string, d digest.Digest) string {
+	return filepath.Join(dir, "blobs", d.Algorithm().String(), d.Encoded())
 }
 
 func (s *copySuite) TestCopySimpleAtomicRegistry() {
