@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/pkg/homedir"
 	"gopkg.in/check.v1"
 )
 
@@ -221,8 +220,10 @@ func (cluster *openshiftCluster) ocLoginToProject(c *check.C) {
 // dockerLogin simulates (docker login) to the cluster, or terminates on failure.
 // We do not run (docker login) directly, because that requires a running daemon and a docker package.
 func (cluster *openshiftCluster) dockerLogin(c *check.C) {
-	cluster.dockerDir = filepath.Join(homedir.Get(), ".docker")
-	err := os.Mkdir(cluster.dockerDir, 0700)
+	home, err := os.UserHomeDir()
+	c.Assert(err, check.IsNil)
+	cluster.dockerDir = filepath.Join(home, ".docker")
+	err = os.Mkdir(cluster.dockerDir, 0700)
 	c.Assert(err, check.IsNil)
 
 	out := combinedOutputOfCommand(c, "oc", "config", "view", "-o", "json", "-o", "jsonpath={.users[*].user.token}")
