@@ -573,7 +573,7 @@ func (s *copySuite) TestCopySucceedsWhenImageDoesNotMatchRuntimeButWeOverride() 
 // are identified from the control copy — which cannot lose its URLs, because nothing was
 // downloaded and the URL is the only pointer to the content — and the with-flag layout is
 // then required to be self-contained: every layer it lists is present on disk.
-func (s *copySuite) TestCopyDownloadForeighLayers() {
+func (s *copySuite) TestCopyDownloadForeignLayers() {
 	t := s.T()
 	withFlag := t.TempDir()
 	withoutFlag := t.TempDir()
@@ -590,7 +590,7 @@ func (s *copySuite) TestCopyDownloadForeighLayers() {
 	}
 	assertSkopeoSucceeds(t, "", "--override-os=windows", "--override-arch=amd64", "copy", "--retry-times", "3", "--download-foreign-layers", knownWindowsOnlyImage, "oci:"+withFlag)
 	for _, d := range foreignDigests {
-		assert.FileExists(t.ociBlobPath(withFlag, d), "foreign layer %s should be downloaded with --download-foreign-layers", d)
+		assert.FileExists(t, ociBlobPath(withFlag, d), "foreign layer %s should be downloaded with --download-foreign-layers", d)
 	}
 	for _, l := range ociLayoutLayers(t, withFlag) {
 		assert.FileExists(t, ociBlobPath(withFlag, l.Digest), "layer %s is missing: the layout is not self-contained", l.Digest)
