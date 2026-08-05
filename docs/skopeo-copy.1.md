@@ -65,7 +65,7 @@ This option does not change what will be copied; consider using `--all` at the s
 
 **--download-foreign-layers**
 
-Download layer contents for nondistributable ("foreign") layers — e.g. Windows base layers — that would otherwise be skipped in favor of URL references to their original location. By default, foreign layers are not downloaded.
+Download layer contents for nondistributable ("foreign") layers — e.g., Windows base layers — that would otherwise be skipped in favor of URL references to their original location. By default, foreign layers are not downloaded when the destination can store URL references instead (notably `oci:` and `docker://`). Other destinations already fetch them.
 
 Useful for air-gapped or offline copies of images whose original source may later become unreachable. Note that the destination manifest is not rewritten: layers downloaded by this option still appear with their original nondistributable media type and `urls` field, so consumers that strictly reject manifests containing foreign URLs are not helped by this option alone.
 
