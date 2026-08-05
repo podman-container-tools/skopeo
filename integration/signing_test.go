@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/containers/image/v5/signature"
+	"go.podman.io/image/v5/signature"
 	"gopkg.in/check.v1"
 )
 

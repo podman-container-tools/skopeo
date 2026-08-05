@@ -15,11 +15,15 @@ TestRunShell is not really a test; it is a convenient way to use the registry se
 in openshift.go and CopySuite to get an interactive environment for experimentation.
 
 To use it, run:
+
 	sudo make shell
+
 to start a container, then within the container:
+
 	SKOPEO_CONTAINER_TESTS=1 PS1='nested> ' go test -tags openshift_shell -timeout=24h ./integration -v -check.v -check.vv -check.f='CopySuite.TestRunShell'
 
 An example of what can be done within the container:
+
 	cd ..; make bin/skopeo PREFIX=/usr install
 	./skopeo --tls-verify=false  copy --sign-by=personal@example.com docker://quay.io/libpod/busybox:latest atomic:localhost:5000/myns/personal:personal
 	oc get istag personal:personal -o json

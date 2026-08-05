@@ -14,14 +14,8 @@ const (
 	positionRight
 )
 
-var defaultSpinnerStyle = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
-// SpinnerStyleComposer interface.
-type SpinnerStyleComposer interface {
-	BarFillerBuilder
-	PositionLeft() SpinnerStyleComposer
-	PositionRight() SpinnerStyleComposer
-	Meta(func(string) string) SpinnerStyleComposer
+var spinnerStyleComposer = SpinnerStyleComposer{
+	frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 }
 
 type spinnerFiller struct {
@@ -31,40 +25,43 @@ type spinnerFiller struct {
 	position func(string, int) string
 }
 
-type spinnerStyle struct {
+// SpinnerStyleComposer is a builder which provides methods to build custom BarFiller.
+// Call SpinnerStyle to construct a new one.
+type SpinnerStyleComposer struct {
 	position uint
 	frames   []string
 	meta     func(string) string
 }
 
-// SpinnerStyle constructs default spinner style which can be altered via
-// SpinnerStyleComposer interface.
+// SpinnerStyle constructs default SpinnerStyleComposer which implements
+// BarFillerBuilder interface.
 func SpinnerStyle(frames ...string) SpinnerStyleComposer {
-	var ss spinnerStyle
-	if len(frames) != 0 {
-		ss.frames = frames
-	} else {
-		ss.frames = defaultSpinnerStyle[:]
+	if len(frames) == 0 {
+		return spinnerStyleComposer
 	}
-	return ss
+	return SpinnerStyleComposer{frames: frames}
 }
 
-func (s spinnerStyle) PositionLeft() SpinnerStyleComposer {
+func (s SpinnerStyleComposer) PositionLeft() SpinnerStyleComposer {
 	s.position = positionLeft
 	return s
 }
 
-func (s spinnerStyle) PositionRight() SpinnerStyleComposer {
+func (s SpinnerStyleComposer) PositionRight() SpinnerStyleComposer {
 	s.position = positionRight
 	return s
 }
 
-func (s spinnerStyle) Meta(fn func(string) string) SpinnerStyleComposer {
+func (s SpinnerStyleComposer) Meta(fn func(string) string) SpinnerStyleComposer {
 	s.meta = fn
 	return s
 }
 
-func (s spinnerStyle) Build() BarFiller {
+func (s SpinnerStyleComposer) ToBuilder() BarFillerBuilder {
+	return s
+}
+
+func (s SpinnerStyleComposer) Build() BarFiller {
 	sf := &spinnerFiller{frames: s.frames}
 	switch s.position {
 	case positionLeft:

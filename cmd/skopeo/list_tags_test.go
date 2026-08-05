@@ -3,9 +3,9 @@ package main
 import (
 	"testing"
 
-	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.podman.io/image/v5/transports/alltransports"
 )
 
 // Tests the kinds of inputs allowed and expected to the command

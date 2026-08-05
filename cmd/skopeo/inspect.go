@@ -9,18 +9,18 @@ import (
 	"text/tabwriter"
 	"text/template"
 
-	"github.com/containers/common/pkg/report"
-	"github.com/containers/common/pkg/retry"
-	"github.com/containers/image/v5/docker"
-	"github.com/containers/image/v5/image"
-	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/transports"
-	"github.com/containers/image/v5/types"
 	"github.com/containers/skopeo/cmd/skopeo/inspect"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.podman.io/common/pkg/report"
+	"go.podman.io/common/pkg/retry"
+	"go.podman.io/image/v5/docker"
+	"go.podman.io/image/v5/image"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/transports"
+	"go.podman.io/image/v5/types"
 )
 
 type inspectOptions struct {

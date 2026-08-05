@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/containers/image/v5/transports"
 	"github.com/spf13/cobra"
+	"go.podman.io/image/v5/transports"
 )
 
 // autocompleteSupportedTransports list all supported transports with the colon suffix.

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	commonFlag "github.com/containers/common/pkg/flag"
-	"github.com/containers/image/v5/signature"
-	"github.com/containers/image/v5/types"
 	"github.com/containers/skopeo/version"
-	"github.com/containers/storage/pkg/reexec"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	commonFlag "go.podman.io/common/pkg/flag"
+	"go.podman.io/image/v5/signature"
+	"go.podman.io/image/v5/types"
+	"go.podman.io/storage/pkg/reexec"
 )
 
 // gitCommit will be the hash that the binary was built from

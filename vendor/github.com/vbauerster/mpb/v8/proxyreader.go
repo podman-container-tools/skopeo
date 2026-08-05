@@ -5,69 +5,72 @@ import (
 	"time"
 )
 
-type proxyReader struct {
-	io.ReadCloser
+type proxyReadCloser struct {
+	r   io.Reader
 	bar *Bar
 }
 
-func (x proxyReader) Read(p []byte) (int, error) {
-	n, err := x.ReadCloser.Read(p)
+func (x proxyReadCloser) Read(p []byte) (int, error) {
+	n, err := x.r.Read(p)
 	x.bar.IncrBy(n)
 	return n, err
 }
 
+func (x proxyReadCloser) Close() error {
+	if rc, ok := x.r.(io.ReadCloser); ok {
+		return rc.Close()
+	}
+	return nil
+}
+
 type proxyWriterTo struct {
-	proxyReader
+	proxyReadCloser
+	wt io.WriterTo
 }
 
 func (x proxyWriterTo) WriteTo(w io.Writer) (int64, error) {
-	n, err := x.ReadCloser.(io.WriterTo).WriteTo(w)
-	x.bar.IncrInt64(n)
-	return n, err
+	return x.wt.WriteTo(proxyWriteCloser{w, x.bar})
 }
 
-type ewmaProxyReader struct {
-	io.ReadCloser
+type ewmaProxyReadCloser struct {
+	r   io.Reader
 	bar *Bar
 }
 
-func (x ewmaProxyReader) Read(p []byte) (int, error) {
+func (x ewmaProxyReadCloser) Read(p []byte) (int, error) {
 	start := time.Now()
-	n, err := x.ReadCloser.Read(p)
+	n, err := x.r.Read(p)
 	x.bar.EwmaIncrBy(n, time.Since(start))
 	return n, err
 }
 
+func (x ewmaProxyReadCloser) Close() error {
+	if rc, ok := x.r.(io.ReadCloser); ok {
+		return rc.Close()
+	}
+	return nil
+}
+
 type ewmaProxyWriterTo struct {
-	ewmaProxyReader
+	ewmaProxyReadCloser
+	wt io.WriterTo
 }
 
 func (x ewmaProxyWriterTo) WriteTo(w io.Writer) (int64, error) {
-	start := time.Now()
-	n, err := x.ReadCloser.(io.WriterTo).WriteTo(w)
-	x.bar.EwmaIncrInt64(n, time.Since(start))
-	return n, err
+	return x.wt.WriteTo(ewmaProxyWriteCloser{w, x.bar})
 }
 
 func newProxyReader(r io.Reader, b *Bar, hasEwma bool) io.ReadCloser {
-	rc := toReadCloser(r)
 	if hasEwma {
-		epr := ewmaProxyReader{rc, b}
-		if _, ok := r.(io.WriterTo); ok {
-			return ewmaProxyWriterTo{epr}
+		epr := ewmaProxyReadCloser{r, b}
+		if wt, ok := r.(io.WriterTo); ok {
+			return ewmaProxyWriterTo{epr, wt}
 		}
 		return epr
 	}
-	pr := proxyReader{rc, b}
-	if _, ok := r.(io.WriterTo); ok {
-		return proxyWriterTo{pr}
+	pr := proxyReadCloser{r, b}
+	if wt, ok := r.(io.WriterTo); ok {
+		return proxyWriterTo{pr, wt}
 	}
 	return pr
-}
-
-func toReadCloser(r io.Reader) io.ReadCloser {
-	if rc, ok := r.(io.ReadCloser); ok {
-		return rc
-	}
-	return io.NopCloser(r)
 }

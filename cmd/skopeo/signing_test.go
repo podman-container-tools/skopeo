@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/containers/image/v5/signature"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.podman.io/image/v5/signature"
 )
 
 const (

@@ -13,8 +13,8 @@ import (
 
 	"gopkg.in/check.v1"
 
-	"github.com/containers/image/v5/manifest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"go.podman.io/image/v5/manifest"
 )
 
 // This image is known to be x86_64 only right now

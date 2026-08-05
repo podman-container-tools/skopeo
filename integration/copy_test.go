@@ -14,12 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/signature"
-	"github.com/containers/image/v5/types"
 	digest "github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/opencontainers/image-tools/image"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/signature"
+	"go.podman.io/image/v5/types"
 	"gopkg.in/check.v1"
 )
 

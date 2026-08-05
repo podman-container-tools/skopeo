@@ -7,17 +7,17 @@ import (
 	"os"
 	"strings"
 
-	commonFlag "github.com/containers/common/pkg/flag"
-	"github.com/containers/common/pkg/retry"
-	"github.com/containers/image/v5/copy"
-	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/pkg/cli"
-	"github.com/containers/image/v5/transports"
-	"github.com/containers/image/v5/transports/alltransports"
 	encconfig "github.com/containers/ocicrypt/config"
 	enchelpers "github.com/containers/ocicrypt/helpers"
 	"github.com/spf13/cobra"
+	commonFlag "go.podman.io/common/pkg/flag"
+	"go.podman.io/common/pkg/retry"
+	"go.podman.io/image/v5/copy"
+	"go.podman.io/image/v5/docker/reference"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/pkg/cli"
+	"go.podman.io/image/v5/transports"
+	"go.podman.io/image/v5/transports/alltransports"
 )
 
 type copyOptions struct {

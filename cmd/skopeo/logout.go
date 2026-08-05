@@ -3,10 +3,10 @@ package main
 import (
 	"io"
 
-	"github.com/containers/common/pkg/auth"
-	commonFlag "github.com/containers/common/pkg/flag"
-	"github.com/containers/image/v5/types"
 	"github.com/spf13/cobra"
+	"go.podman.io/common/pkg/auth"
+	commonFlag "go.podman.io/common/pkg/flag"
+	"go.podman.io/image/v5/types"
 )
 
 type logoutOptions struct {

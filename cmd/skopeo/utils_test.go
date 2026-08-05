@@ -3,13 +3,13 @@ package main
 import (
 	"testing"
 
-	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/types"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/types"
 )
 
 // fakeGlobalOptions creates globalOptions and sets it according to flags.

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/containers/image/v5/types"
 	"github.com/stretchr/testify/assert"
+	"go.podman.io/image/v5/types"
 )
 
 // runSkopeo creates an app object and runs it with args, with an implied first "skopeo".

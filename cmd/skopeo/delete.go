@@ -6,10 +6,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/containers/common/pkg/retry"
-	"github.com/containers/image/v5/transports"
-	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/spf13/cobra"
+	"go.podman.io/common/pkg/retry"
+	"go.podman.io/image/v5/transports"
+	"go.podman.io/image/v5/transports/alltransports"
 )
 
 type deleteOptions struct {
