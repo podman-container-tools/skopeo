@@ -68,7 +68,7 @@ func (i *UnparsedImage) Manifest(ctx context.Context) ([]byte, string, error) {
 			if err != nil {
 				return nil, "", fmt.Errorf("computing manifest digest: %w", err)
 			}
-			if !matches {
+			if i.Reference().Transport().Name() != "docker-daemon" && !matches {
 				return nil, "", fmt.Errorf("Manifest does not match provided manifest digest %s", digest)
 			}
 		}
