@@ -32,9 +32,8 @@ SEQUOIA_SONAME_DIR =
 GOLANGCI_LINT_VERSION := 2.13.2
 
 ifeq ($(GOBIN),)
-# Ask the go tool for GOPATH; $(GOPATH) is only set if it happens to be exported into
-# make's environment, and would silently expand to "/bin" otherwise.
-GOBIN := $(shell $(GO) env GOPATH)/bin
+# With Go >= 1.27, `go env GOBIN` always produces a value and this fallback can be removed.
+GOBIN := $(firstword $(subst :, ,$(shell $(GO) env GOPATH)))/bin
 endif
 
 # Scripts may also use CONTAINER_RUNTIME, so we need to export it.
@@ -49,7 +48,7 @@ GOMD2MAN ?= $(if $(shell command -v go-md2man ;),go-md2man,$(GOBIN)/go-md2man)
 # Prefer a golangci-lint from $PATH (e.g. the one installed by golangci-lint-action in CI),
 # but only if it is the expected version; otherwise use the copy (make tools) installs
 # into $(GOBIN).
-GOLANGCI_LINT ?= $(if $(shell golangci-lint --version 2>/dev/null | grep -wF "$(GOLANGCI_LINT_VERSION)"),golangci-lint,$(GOBIN)/golangci-lint)
+GOLANGCI_LINT ?= $(if $(shell golangci-lint --version 2>/dev/null | grep -F "$(GOLANGCI_LINT_VERSION)"),golangci-lint,$(GOBIN)/golangci-lint)
 
 ifeq ($(DEBUG), 1)
   override GOGCFLAGS += -N -l
@@ -195,7 +194,7 @@ shell:
 
 .PHONY: tools
 tools:
-	if ! $(GOLANGCI_LINT) --version 2>/dev/null | grep -qwF "$(GOLANGCI_LINT_VERSION)"; then \
+	if ! $(GOLANGCI_LINT) --version 2>/dev/null | grep -qF "$(GOLANGCI_LINT_VERSION)"; then \
 		curl -sSfL --retry 5 https://golangci-lint.run/install.sh | sh -s -- -b "$(GOBIN)" "v$(GOLANGCI_LINT_VERSION)" ; \
 	fi
 
