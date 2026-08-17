@@ -32,7 +32,9 @@ SEQUOIA_SONAME_DIR =
 GOLANGCI_LINT_VERSION := 2.12.2
 
 ifeq ($(GOBIN),)
-GOBIN := $(GOPATH)/bin
+# Ask the go tool for GOPATH; $(GOPATH) is only set if it happens to be exported into
+# make's environment, and would silently expand to "/bin" otherwise.
+GOBIN := $(shell $(GO) env GOPATH)/bin
 endif
 
 # Scripts may also use CONTAINER_RUNTIME, so we need to export it.
