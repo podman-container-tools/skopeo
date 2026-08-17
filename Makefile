@@ -33,8 +33,9 @@ GOLANGCI_LINT_VERSION := 2.12.2
 
 ifeq ($(GOBIN),)
 # Ask the go tool for GOPATH; $(GOPATH) is only set if it happens to be exported into
-# make's environment, and would silently expand to "/bin" otherwise.
-GOBIN := $(shell $(GO) env GOPATH)/bin
+# make's environment, and would silently expand to "/bin" otherwise. GOPATH is a list,
+# and the go tool installs into the first element, so use that one.
+GOBIN := $(firstword $(subst :, ,$(shell $(GO) env GOPATH)))/bin
 endif
 
 # Scripts may also use CONTAINER_RUNTIME, so we need to export it.
