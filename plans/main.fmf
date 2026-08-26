@@ -20,7 +20,11 @@ prepare:
       script: |
         COPR_REPO_FILE="/etc/yum.repos.d/*podman-next*.repo"
         if compgen -G $COPR_REPO_FILE > /dev/null; then
-            sed -i -n '/^priority=/!p;$apriority=1' $COPR_REPO_FILE
+            sed -i -n '/^priority=/!p;$apriority=5' $COPR_REPO_FILE
+        fi
+        PR_REPO_FILE="/etc/yum.repos.d/*skopeo*.repo"
+        if compgen -G $PR_REPO_FILE > /dev/null; then
+            sed -i -n '/^priority=/!p;$apriority=1' $PR_REPO_FILE
         fi
         dnf -y upgrade --allowerasing
       order: 20

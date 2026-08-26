@@ -50,6 +50,7 @@ const (
 	blobsPath               = "/v2/%s/blobs/%s"
 	blobUploadPath          = "/v2/%s/blobs/uploads/"
 	extensionsSignaturePath = "/extensions/v2/%s/signatures/%s"
+	referrersPath           = "/v2/%s/referrers/%s"
 
 	minimumTokenLifetimeSeconds = 60
 
@@ -1246,6 +1247,165 @@ func (c *dockerClient) getSigstoreAttachmentManifest(ctx context.Context, ref do
 		return nil, fmt.Errorf("parsing manifest %s: %w", sigstoreRef.String(), err)
 	}
 	return res, nil
+}
+
+const maxReferrersPages = 32
+
+// getReferrers queries the OCI Referrers API for artifacts attached to the given digest.
+// It falls back to the referrers tag schema if the registry does not support the API.
+// It returns (nil, nil) if no referrers are found.
+func (c *dockerClient) getReferrers(ctx context.Context, ref dockerReference, d digest.Digest) (*imgspecv1.Index, error) {
+	if err := d.Validate(); err != nil { // Make sure d.String() doesn't contain any unexpected characters
+		return nil, err
+	}
+	path := fmt.Sprintf(referrersPath, reference.Path(ref.ref), d)
+	headers := map[string][]string{
+		"Accept": {imgspecv1.MediaTypeImageIndex},
+	}
+	logrus.Debugf("Looking for OCI referrers for %s in %s", d, ref.ref.Name())
+	res, err := c.makeRequest(ctx, http.MethodGet, path, headers, nil, v2Auth, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { // closure: res is reassigned during pagination
+		if res != nil {
+			res.Body.Close()
+		}
+	}()
+	if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusMethodNotAllowed || res.StatusCode == http.StatusNotImplemented {
+		logrus.Debugf("Registry does not support the Referrers API, falling back to tag schema")
+		_, _ = io.Copy(io.Discard, res.Body)
+		return c.getReferrersFallbackTag(ctx, ref, d)
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetching referrers for %s in %s: %w", d, ref.ref.Name(), registryHTTPResponseToError(res))
+	}
+
+	// On the first page, silently ignore a wrong Content-Type (could be an
+	// HTML page from a non-conformant proxy). On subsequent pages, treat it
+	// as an error since we already committed to pagination.
+	if ct := simplifyContentType(res.Header.Get("Content-Type")); ct != imgspecv1.MediaTypeImageIndex {
+		logrus.Debugf("Unexpected Content-Type for referrers response: %q, ignoring", ct)
+		return nil, nil
+	}
+
+	var combined imgspecv1.Index
+	for page := 0; ; page++ {
+		body, err := iolimits.ReadAtMost(res.Body, iolimits.MaxManifestBodySize)
+		if err != nil {
+			return nil, err
+		}
+		var index imgspecv1.Index
+		if err := json.Unmarshal(body, &index); err != nil {
+			return nil, fmt.Errorf("decoding referrers response for %s: %w", d, err)
+		}
+		combined.Manifests = append(combined.Manifests, index.Manifests...)
+		if len(combined.Manifests) >= maxReferrersToScan {
+			logrus.Debugf("Accumulated %d referrer descriptors, stopping pagination early", len(combined.Manifests))
+			break
+		}
+
+		nextURL := nextLinkURL(res.Header.Get("Link"))
+		if nextURL == "" {
+			break
+		}
+		if page+1 >= maxReferrersPages {
+			logrus.Debugf("Reached referrers pagination limit (%d pages), stopping", maxReferrersPages)
+			break
+		}
+		res.Body.Close()
+		res = nil // avoid double-close in the deferred closure
+		parsed, err := url.Parse(nextURL)
+		if err != nil {
+			return nil, fmt.Errorf("parsing referrers Link header URL: %w", err)
+		}
+		nextPath := parsed.Path
+		if nextPath == "" {
+			nextPath = path
+		}
+		if parsed.RawQuery != "" {
+			nextPath += "?" + parsed.RawQuery
+		}
+		res, err = c.makeRequest(ctx, http.MethodGet, nextPath, headers, nil, v2Auth, nil)
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("fetching referrers page %d for %s in %s: %w", page+1, d, ref.ref.Name(), registryHTTPResponseToError(res))
+		}
+		if ct := simplifyContentType(res.Header.Get("Content-Type")); ct != imgspecv1.MediaTypeImageIndex {
+			return nil, fmt.Errorf("unexpected Content-Type %q on referrers page %d for %s", ct, page+1, d)
+		}
+	}
+	if len(combined.Manifests) == 0 {
+		return nil, nil
+	}
+	return &combined, nil
+}
+
+// nextLinkURL extracts the URI from a Link header with rel="next".
+// Returns "" if the header is absent or does not contain a next link.
+func nextLinkURL(linkHeader string) string {
+	if linkHeader == "" {
+		return ""
+	}
+	for part := range strings.SplitSeq(linkHeader, ",") {
+		part = strings.TrimSpace(part)
+		urlPart, params, _ := strings.Cut(part, ";")
+		if !hasLinkParam(params, "rel", "next") {
+			continue
+		}
+		urlPart = strings.TrimSpace(urlPart)
+		if strings.HasPrefix(urlPart, "<") && strings.HasSuffix(urlPart, ">") {
+			return urlPart[1 : len(urlPart)-1]
+		}
+	}
+	return ""
+}
+
+// hasLinkParam checks whether a Link header parameter string contains
+// a specific key=value pair (with or without quotes around the value).
+// Matching is case-insensitive per RFC 8288.
+func hasLinkParam(params, key, value string) bool {
+	for param := range strings.SplitSeq(params, ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(param), "=")
+		if ok && strings.EqualFold(strings.TrimSpace(k), key) {
+			v = strings.TrimSpace(v)
+			if strings.EqualFold(v, value) || strings.EqualFold(v, `"`+value+`"`) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// getReferrersFallbackTag implements the OCI referrers tag schema fallback
+// for registries that do not support the Referrers API.
+func (c *dockerClient) getReferrersFallbackTag(ctx context.Context, ref dockerReference, d digest.Digest) (*imgspecv1.Index, error) {
+	// The OCI referrers tag schema uses the digest without a suffix,
+	// unlike the cosign convention which appends ".sig".
+	tag := strings.Replace(d.String(), ":", "-", 1)
+	logrus.Debugf("Looking for OCI referrers via tag schema: %s", tag)
+	manifestBlob, mimeType, err := c.fetchManifest(ctx, ref, tag)
+	if err != nil {
+		if isManifestUnknownError(err) {
+			logrus.Debugf("Referrers tag %s does not exist: %v", tag, err)
+			return nil, nil
+		}
+		return nil, err
+	}
+	if mimeType != imgspecv1.MediaTypeImageIndex {
+		logrus.Debugf("Unexpected MIME type for referrers tag %s: %q, ignoring", tag, mimeType)
+		return nil, nil
+	}
+	var index imgspecv1.Index
+	if err := json.Unmarshal(manifestBlob, &index); err != nil {
+		return nil, fmt.Errorf("parsing referrers tag %s: %w", tag, err)
+	}
+	if len(index.Manifests) == 0 {
+		return nil, nil
+	}
+	return &index, nil
 }
 
 // getExtensionsSignatures returns signatures from the X-Registry-Supports-Signatures API extension,
