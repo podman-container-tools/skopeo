@@ -23,6 +23,7 @@ import (
 	"github.com/docker/distribution/registry/api/errcode"
 	v2 "github.com/docker/distribution/registry/api/v2"
 	digest "github.com/opencontainers/go-digest"
+	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 	"go.podman.io/image/v5/docker/reference"
 	"go.podman.io/image/v5/internal/imagesource/impl"
@@ -785,10 +786,39 @@ func (s *dockerImageSource) GetSignaturesWithFormat(ctx context.Context, instanc
 		return nil, errors.New("Internal error: X-Registry-Supports-Signatures extension not supported, and lookaside should not be empty configuration")
 	}
 
+	sigsBefore := len(res)
+	if err := s.appendSignaturesFromReferrers(ctx, &res, instanceDigest); err != nil {
+		return nil, err
+	}
 	if err := s.appendSignaturesFromSigstoreAttachments(ctx, &res, instanceDigest); err != nil {
 		return nil, err
 	}
+	if len(res) > sigsBefore {
+		res = deduplicateSigstoreSignatures(res, sigsBefore)
+	}
 	return res, nil
+}
+
+// deduplicateSigstoreSignatures removes duplicate sigstore signatures from sigs.
+// Elements before sigsBefore are preserved unconditionally; elements from sigsBefore
+// onward are deduplicated against each other by their serialized content.
+func deduplicateSigstoreSignatures(sigs []signature.Signature, sigsBefore int) []signature.Signature {
+	seen := make(map[string]struct{})
+	deduped := make([]signature.Signature, 0, len(sigs))
+	deduped = append(deduped, sigs[:sigsBefore]...)
+	for _, sig := range sigs[sigsBefore:] {
+		blob, err := signature.Blob(sig)
+		if err != nil {
+			deduped = append(deduped, sig)
+			continue
+		}
+		key := digest.FromBytes(blob).String()
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			deduped = append(deduped, sig)
+		}
+	}
+	return deduped
 }
 
 // manifestDigest returns a digest of the manifest, from instanceDigest if non-nil; or from the supplied reference,
@@ -958,6 +988,111 @@ func (s *dockerImageSource) appendSignaturesFromSigstoreAttachments(ctx context.
 			return err
 		}
 		*dest = append(*dest, signature.SigstoreFromComponents(layer.MediaType, payload, layer.Annotations))
+	}
+	return nil
+}
+
+const (
+	// maxReferrersToProcess is the maximum number of referrer manifests to fetch.
+	// This bounds the network fan-out from a malicious or bloated referrers index.
+	maxReferrersToProcess = 64
+	// maxReferrersLayerFetches is the maximum total number of layer blob fetches
+	// across all referrer manifests.
+	maxReferrersLayerFetches = 512
+	// maxReferrersToScan is the maximum number of referrer index entries to iterate.
+	// This prevents unbounded CPU from scanning a bloated index where most entries
+	// are filtered out by artifact type.
+	maxReferrersToScan = 1024
+)
+
+// isSigstoreReferrerArtifactType reports whether artifactType identifies a sigstore signature artifact.
+func isSigstoreReferrerArtifactType(artifactType string) bool {
+	// Empty artifact type matches for cosign v1 compatibility (pre-artifactType convention).
+	if artifactType == "" {
+		return true
+	}
+	return strings.HasPrefix(artifactType, "application/vnd.dev.cosign.") ||
+		strings.HasPrefix(artifactType, "application/vnd.dev.sigstore.")
+}
+
+// appendSignaturesFromReferrers implements GetSignaturesWithFormat() using the OCI Referrers API,
+// storing the signatures to *dest.
+// Unlike appendSignaturesFromSigstoreAttachments, individual referrer fetch/parse errors are
+// logged and skipped rather than returned, because the Referrers API can return unrelated or
+// corrupt artifacts that should not block discovery of valid signatures.
+func (s *dockerImageSource) appendSignaturesFromReferrers(ctx context.Context, dest *[]signature.Signature, instanceDigest *digest.Digest) error {
+	if !s.c.useSigstoreAttachments {
+		logrus.Debugf("Not looking for sigstore referrers: disabled by configuration")
+		return nil
+	}
+
+	manifestDigest, err := s.manifestDigest(ctx, instanceDigest)
+	if err != nil {
+		return err
+	}
+
+	index, err := s.c.getReferrers(ctx, s.physicalRef, manifestDigest)
+	if err != nil {
+		return err
+	}
+	if index == nil {
+		return nil
+	}
+
+	// Filter client-side rather than using the spec's ?artifactType= query
+	// parameter: we need to match two prefixes (cosign, sigstore) plus empty
+	// values, and the spec only allows a single exact value per request.
+	logrus.Debugf("Found %d referrers for %s", len(index.Manifests), manifestDigest)
+	totalLayersFetched := 0
+	manifestsFetched := 0
+	for i, referrer := range index.Manifests {
+		if i >= maxReferrersToScan {
+			logrus.Debugf("Reached referrer scan limit (%d entries), skipping remaining", maxReferrersToScan)
+			break
+		}
+		if manifestsFetched >= maxReferrersToProcess {
+			logrus.Debugf("Reached referrer processing limit (%d), skipping remaining", maxReferrersToProcess)
+			break
+		}
+		if !isSigstoreReferrerArtifactType(referrer.ArtifactType) {
+			logrus.Debugf("Skipping referrer %s: artifact type %q is not a sigstore signature", referrer.Digest.String(), referrer.ArtifactType)
+			continue
+		}
+		logrus.Debugf("Fetching referrer manifest %s (artifactType=%s)", referrer.Digest.String(), referrer.ArtifactType)
+		manifestsFetched++
+		manifestBlob, mimeType, err := s.c.fetchManifest(ctx, s.physicalRef, referrer.Digest.String())
+		if err != nil {
+			logrus.Debugf("Fetching referrer manifest %s failed, skipping: %v", referrer.Digest.String(), err)
+			continue
+		}
+		if mimeType != imgspecv1.MediaTypeImageManifest {
+			logrus.Debugf("Skipping referrer %s: unexpected MIME type %q", referrer.Digest.String(), mimeType)
+			continue
+		}
+		ociManifest, err := manifest.OCI1FromManifest(manifestBlob)
+		if err != nil {
+			logrus.Debugf("Parsing referrer manifest %s failed, skipping: %v", referrer.Digest.String(), err)
+			continue
+		}
+		// We don't benefit from a real BlobInfoCache here because we never try to reuse/mount attachment payloads.
+		for layerIndex, layer := range ociManifest.Layers {
+			if totalLayersFetched >= maxReferrersLayerFetches {
+				logrus.Debugf("Reached total layer fetch limit (%d), skipping remaining layers", maxReferrersLayerFetches)
+				break
+			}
+			logrus.Debugf("Fetching referrer layer %d/%d: %s", layerIndex+1, len(ociManifest.Layers), layer.Digest.String())
+			totalLayersFetched++
+			payload, err := s.c.getOCIDescriptorContents(ctx, s.physicalRef, layer, iolimits.MaxSignatureBodySize,
+				none.NoCache)
+			if err != nil {
+				logrus.Debugf("Fetching referrer layer %s failed, skipping: %v", layer.Digest.String(), err)
+				continue
+			}
+			*dest = append(*dest, signature.SigstoreFromComponents(layer.MediaType, payload, layer.Annotations))
+		}
+		if totalLayersFetched >= maxReferrersLayerFetches {
+			break
+		}
 	}
 	return nil
 }
