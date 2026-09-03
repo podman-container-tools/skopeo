@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/opencontainers/go-digest"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"go.podman.io/common/pkg/retry"
 	"go.podman.io/image/v5/copy"
@@ -189,7 +189,7 @@ func destinationReference(destination string, transport string) (types.ImageRefe
 	default:
 		return nil, fmt.Errorf("%q is not a valid destination transport", transport)
 	}
-	logrus.Debugf("Destination for transport %q: %s", transport, destination)
+	slog.Debug("Destination resolved", "transport", transport, "destination", destination)
 
 	destRef, err := imageTransport.ParseReference(destination)
 	if err != nil {
@@ -203,9 +203,7 @@ func destinationReference(destination string, transport string) (types.ImageRefe
 // It returns a string slice of tags and any error encountered.
 func getImageTags(ctx context.Context, sysCtx *types.SystemContext, repoRef reference.Named) ([]string, error) {
 	name := repoRef.Name()
-	logrus.WithFields(logrus.Fields{
-		"image": name,
-	}).Info("Getting tags")
+	slog.Info("Getting tags", "image", name)
 	// Ugly: NewReference rejects IsNameOnly references, and GetRepositoryTags ignores the tag/digest.
 	// So, we use TagNameOnly here only to shut up NewReference
 	dockerRef, err := docker.NewReference(reference.TagNameOnly(repoRef))
@@ -234,10 +232,7 @@ func imagesToCopyFromRepo(sys *types.SystemContext, repoRef reference.Named) ([]
 	for _, tag := range tags {
 		taggedRef, err := reference.WithTag(repoRef, tag)
 		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"repo": repoRef.Name(),
-				"tag":  tag,
-			}).Errorf("Error creating a tagged reference from registry tag list: %v", err)
+			slog.Error("Error creating a tagged reference from registry tag list", "err", err, "repo", repoRef.Name(), "tag", tag)
 			continue
 		}
 		ref, err := docker.NewReference(taggedRef)
@@ -299,21 +294,15 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 	var repoDescList []repoDescriptor
 
 	if len(cfg.Images) == 0 && len(cfg.ImagesByTagRegex) == 0 && len(cfg.ImagesBySemver) == 0 {
-		logrus.WithFields(logrus.Fields{
-			"registry": registryName,
-		}).Warn("No images specified for registry")
+		slog.Warn("No images specified for registry", "registry", registryName)
 		return repoDescList, nil
 	}
 
 	for imageName, refs := range cfg.Images {
-		repoLogger := logrus.WithFields(logrus.Fields{
-			"repo":     imageName,
-			"registry": registryName,
-		})
+		repoLogger := slog.With("repo", imageName, "registry", registryName)
 		repoRef, err := parseRepositoryReference(fmt.Sprintf("%s/%s", registryName, imageName))
 		if err != nil {
-			repoLogger.Error("Error parsing repository name, skipping")
-			logrus.Error(err)
+			repoLogger.Error("Error parsing repository name, skipping", "err", err)
 			continue
 		}
 
@@ -322,30 +311,27 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 		var sourceReferences []types.ImageReference
 		if len(refs) != 0 {
 			for _, ref := range refs {
-				tagLogger := logrus.WithFields(logrus.Fields{"ref": ref})
+				tagLogger := slog.With("ref", ref)
 				var named reference.Named
 				// first try as digest
 				if d, err := digest.Parse(ref); err == nil {
 					named, err = reference.WithDigest(repoRef, d)
 					if err != nil {
-						tagLogger.Error("Error processing ref, skipping")
-						logrus.Error(err)
+						tagLogger.Error("Error processing ref, skipping", "err", err)
 						continue
 					}
 				} else {
-					tagLogger.Debugf("Ref was not a digest, trying as a tag: %s", err)
+					tagLogger.Debug("Ref was not a digest, trying as a tag", "err", err)
 					named, err = reference.WithTag(repoRef, ref)
 					if err != nil {
-						tagLogger.Error("Error parsing ref, skipping")
-						logrus.Error(err)
+						tagLogger.Error("Error parsing ref, skipping", "err", err)
 						continue
 					}
 				}
 
 				imageRef, err := docker.NewReference(named)
 				if err != nil {
-					tagLogger.Error("Error processing ref, skipping")
-					logrus.Errorf("Error getting image reference: %s", err)
+					tagLogger.Error("Error processing ref, skipping", "err", err)
 					continue
 				}
 				sourceReferences = append(sourceReferences, imageRef)
@@ -354,14 +340,13 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 			repoLogger.Info("Querying registry for image tags")
 			sourceReferences, err = imagesToCopyFromRepo(serverCtx, repoRef)
 			if err != nil {
-				repoLogger.Error("Error processing repo, skipping")
-				logrus.Error(err)
+				repoLogger.Error("Error processing repo, skipping", "err", err)
 				continue
 			}
 		}
 
 		if len(sourceReferences) == 0 {
-			repoLogger.Warnf("No refs to sync found")
+			repoLogger.Warn("No refs to sync found")
 			continue
 		}
 		repoDescList = append(repoDescList, repoDescriptor{
@@ -374,7 +359,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 	{
 		filterCollection, err := tagRegexFilterCollection(cfg.ImagesByTagRegex)
 		if err != nil {
-			logrus.Error(err)
+			slog.Error(err.Error())
 		} else {
 			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
 			repoDescList = append(repoDescList, additionalRepoDescList...)
@@ -385,7 +370,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 	{
 		filterCollection, err := semverFilterCollection(cfg.ImagesBySemver)
 		if err != nil {
-			logrus.Error(err)
+			slog.Error(err.Error())
 		} else {
 			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
 			repoDescList = append(repoDescList, additionalRepoDescList...)
@@ -397,7 +382,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 
 // filterFunc is a function used to limit the initial set of image references
 // using tags, patterns, semver, etc.
-type filterFunc func(*logrus.Entry, types.ImageReference) bool
+type filterFunc func(*slog.Logger, types.ImageReference) bool
 
 // filterCollection is a map of repository names to filter functions.
 type filterCollection map[string]filterFunc
@@ -408,15 +393,11 @@ type filterCollection map[string]filterFunc
 func filterSourceReferences(sys *types.SystemContext, registryName string, collection filterCollection) []repoDescriptor {
 	var repoDescList []repoDescriptor
 	for repoName, filter := range collection {
-		logger := logrus.WithFields(logrus.Fields{
-			"repo":     repoName,
-			"registry": registryName,
-		})
+		logger := slog.With("repo", repoName, "registry", registryName)
 
 		repoRef, err := parseRepositoryReference(fmt.Sprintf("%s/%s", registryName, repoName))
 		if err != nil {
-			logger.Error("Error parsing repository name, skipping")
-			logrus.Error(err)
+			logger.Error("Error parsing repository name, skipping", "err", err)
 			continue
 		}
 
@@ -427,8 +408,7 @@ func filterSourceReferences(sys *types.SystemContext, registryName string, colle
 		logger.Info("Querying registry for image tags")
 		sourceReferences, err = imagesToCopyFromRepo(sys, repoRef)
 		if err != nil {
-			logger.Error("Error processing repo, skipping")
-			logrus.Error(err)
+			logger.Error("Error processing repo, skipping", "err", err)
 			continue
 		}
 
@@ -440,7 +420,7 @@ func filterSourceReferences(sys *types.SystemContext, registryName string, colle
 		}
 
 		if len(filteredSourceReferences) == 0 {
-			logger.Warnf("No refs to sync found")
+			logger.Warn("No refs to sync found")
 			continue
 		}
 
@@ -464,10 +444,10 @@ func tagRegexFilterCollection(collection map[string]string) (filterCollection, e
 			return nil, err
 		}
 
-		f := func(logger *logrus.Entry, sourceReference types.ImageReference) bool {
+		f := func(logger *slog.Logger, sourceReference types.ImageReference) bool {
 			tagged, isTagged := sourceReference.DockerReference().(reference.Tagged)
 			if !isTagged {
-				logger.Errorf("Internal error, reference %s does not have a tag, skipping", sourceReference.DockerReference())
+				logger.Error("Internal error, reference does not have a tag, skipping", "ref", sourceReference.DockerReference())
 				return false
 			}
 			return pattern.MatchString(tagged.Tag())
@@ -490,15 +470,15 @@ func semverFilterCollection(collection map[string]string) (filterCollection, err
 			return nil, err
 		}
 
-		f := func(logger *logrus.Entry, sourceReference types.ImageReference) bool {
+		f := func(logger *slog.Logger, sourceReference types.ImageReference) bool {
 			tagged, isTagged := sourceReference.DockerReference().(reference.Tagged)
 			if !isTagged {
-				logger.Errorf("Internal error, reference %s does not have a tag, skipping", sourceReference.DockerReference())
+				logger.Error("Internal error, reference does not have a tag, skipping", "ref", sourceReference.DockerReference())
 				return false
 			}
 			tagVersion, err := semver.NewVersion(tagged.Tag())
 			if err != nil {
-				logger.Tracef("Tag %q cannot be parsed as semver, skipping", tagged.Tag())
+				logger.Debug("Tag cannot be parsed as semver, skipping", "tag", tagged.Tag())
 				return false
 			}
 			return constraint.Check(tagVersion)
@@ -528,10 +508,7 @@ func imagesToCopy(source string, transport string, sourceCtx *types.SystemContex
 			return nil, fmt.Errorf("Cannot obtain a valid image reference for transport %q and reference %q: %w", docker.Transport.Name(), source, err)
 		}
 		imageTagged := !reference.IsNameOnly(named)
-		logrus.WithFields(logrus.Fields{
-			"imagename": source,
-			"tagged":    imageTagged,
-		}).Info("Tag presence check")
+		slog.Info("Tag presence check", "imagename", source, "tagged", imageTagged)
 		if imageTagged {
 			srcRef, err := docker.NewReference(named)
 			if err != nil {
@@ -662,7 +639,7 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 	errorsPresent := false
 	imagesNumber := 0
 	if opts.dryRun {
-		logrus.Warn("Running in dry-run mode")
+		slog.Warn("Running in dry-run mode")
 	}
 
 	var digestFile *os.File
@@ -705,14 +682,11 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 				return err
 			}
 
-			fromToFields := logrus.Fields{
-				"from": transports.ImageName(ref),
-				"to":   transports.ImageName(destRef),
-			}
+			fromToFields := slog.With("from", transports.ImageName(ref), "to", transports.ImageName(destRef))
 			if opts.dryRun {
-				logrus.WithFields(fromToFields).Infof("Would have copied image ref %d/%d", counter+1, len(srcRepo.ImageRefs))
+				fromToFields.Info(fmt.Sprintf("Would have copied image ref %d/%d", counter+1, len(srcRepo.ImageRefs)))
 			} else {
-				logrus.WithFields(fromToFields).Infof("Copying image ref %d/%d", counter+1, len(srcRepo.ImageRefs))
+				fromToFields.Info(fmt.Sprintf("Copying image ref %d/%d", counter+1, len(srcRepo.ImageRefs)))
 				if err = retry.IfNecessary(ctx, func() error {
 					manifestBytes, err = copy.Image(ctx, policyContext, destRef, ref, options)
 					return err
@@ -723,7 +697,7 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 					// log the error, keep a note that there was a failure and move on to the next
 					// image ref
 					errorsPresent = true
-					logrus.WithError(err).Errorf("Error copying ref %q", transports.ImageName(ref))
+					slog.Error("Error copying", "ref", transports.ImageName(ref), "err", err)
 					continue
 				}
 				// Ensure that we log the manifest digest to a file only if the copy operation was successful
@@ -744,9 +718,9 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 	}
 
 	if opts.dryRun {
-		logrus.Infof("Would have synced %d images from %d sources", imagesNumber, len(srcRepoList))
+		slog.Info(fmt.Sprintf("Would have synced %d images from %d sources", imagesNumber, len(srcRepoList)))
 	} else {
-		logrus.Infof("Synced %d images from %d sources", imagesNumber, len(srcRepoList))
+		slog.Info(fmt.Sprintf("Synced %d images from %d sources", imagesNumber, len(srcRepoList)))
 	}
 	if !errorsPresent {
 		return nil

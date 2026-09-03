@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/docker/distribution/registry/api/errcode"
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"go.podman.io/common/pkg/report"
 	"go.podman.io/common/pkg/retry"
@@ -214,7 +214,7 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 			if fatalFailure {
 				return fmt.Errorf("Error determining repository tags: %w", err)
 			}
-			logrus.Warnf("Registry disallows tag list retrieval; skipping")
+			slog.Warn("Registry disallows tag list retrieval; skipping")
 		}
 	}
 	return opts.writeOutput(stdout, outputData)
