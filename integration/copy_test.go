@@ -1195,7 +1195,7 @@ func (s *copySuite) TestCopyVerifyingMirroredSignatures() {
 		"--policy", policy, "--registries.d", registriesDir, "--registries-conf", "fixtures/registries.conf", "copy", "--src-tls-verify=false", regPrefix+"primary:mirror-signed", dirDest)
 
 	// Fail if we specify an unqualified identity
-	assertSkopeoFails(t, ".*Could not parse --sign-identity: repository name must be canonical.*",
+	assertSkopeoFails(t, ".*parsing --sign-identity: repository name must be canonical.*",
 		"--registries.d", registriesDir, "copy", "--src-tls-verify=false", "--dest-tls-verify=false", "--sign-by=personal@example.com", "--sign-identity=this-is-not-fully-specified", regPrefix+"primary:unsigned", regPrefix+"mirror:primary-signed")
 
 	// Create a signature for mirroring-primary:primary-signed without pushing there.

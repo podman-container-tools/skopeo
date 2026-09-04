@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -44,11 +45,11 @@ func requireSubcommand(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		suggestions := cmd.SuggestionsFor(args[0])
 		if len(suggestions) == 0 {
-			return fmt.Errorf("Unrecognized command `%[1]s %[2]s`\nTry '%[1]s --help' for more information", cmd.CommandPath(), args[0])
+			return fmt.Errorf("unrecognized command `%[1]s %[2]s`\nTry '%[1]s --help' for more information", cmd.CommandPath(), args[0])
 		}
-		return fmt.Errorf("Unrecognized command `%[1]s %[2]s`\n\nDid you mean this?\n\t%[3]s\n\nTry '%[1]s --help' for more information", cmd.CommandPath(), args[0], strings.Join(suggestions, "\n\t"))
+		return fmt.Errorf("unrecognized command `%[1]s %[2]s`\n\nDid you mean this?\n\t%[3]s\n\nTry '%[1]s --help' for more information", cmd.CommandPath(), args[0], strings.Join(suggestions, "\n\t"))
 	}
-	return fmt.Errorf("Missing command '%[1]s COMMAND'\nTry '%[1]s --help' for more information", cmd.CommandPath())
+	return fmt.Errorf("missing command '%[1]s COMMAND'\nTry '%[1]s --help' for more information", cmd.CommandPath())
 }
 
 // createApp returns a cobra.Command, and the underlying globalOptions object, to be run or tested.
@@ -152,11 +153,12 @@ func main() {
 	}
 	rootCmd, _ := createApp()
 	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		exitCode := 1
 		if isNotFoundImageError(err) {
-			logrus.StandardLogger().Log(logrus.FatalLevel, err)
-			logrus.Exit(2)
+			exitCode = 2
 		}
-		logrus.Fatal(err)
+		os.Exit(exitCode)
 	}
 }
 
