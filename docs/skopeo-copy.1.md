@@ -63,6 +63,12 @@ Preserve the digests during copying. Fail if the digest cannot be preserved.
 
 This option does not change what will be copied; consider using `--all` at the same time.
 
+**--download-foreign-layers**
+
+Copy the contents of nondistributable ("foreign") layers, such as Windows base layers, to the destination. This overrides the normal behavior for destinations that support foreign-layer URL references. Other destinations copy the contents regardless of the flag.
+
+This flag does not change the foreign layer's media type or `urls` field. Other manifest conversions may still occur.
+
 **--encrypt-layer** _ints_
 
 *Experimental* the 0-indexed layer indices, with support for negative indexing (e.g. 0 is the first layer, -1 is the last layer)
