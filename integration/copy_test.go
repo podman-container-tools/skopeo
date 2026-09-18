@@ -555,6 +555,27 @@ func (s *copySuite) TestCopySucceedsWhenImageDoesNotMatchRuntimeButWeOverride() 
 		"containers-storage:"+storage+"test")
 }
 
+// TestCopyDownloadForeignLayers verifies that --download-foreign-layers controls
+// whether the destination receives the foreign layer's contents.
+func (s *copySuite) TestCopyDownloadForeignLayers() {
+	t := s.T()
+	const foreignLayerDigest = digest.Digest("sha256:e67657dad607f5388fb9b089dc125dcff7fd1e4ebde8fe9e900e7504b8d8a6dc")
+	src := "dir:fixtures/foreign-layer-image"
+
+	withoutFlag := t.TempDir()
+	assertSkopeoSucceeds(t, "", "copy", src, "oci:"+withoutFlag)
+	assert.NoFileExists(t, ociBlobPath(withoutFlag, foreignLayerDigest))
+
+	withFlag := t.TempDir()
+	assertSkopeoSucceeds(t, "", "copy", "--download-foreign-layers", src, "oci:"+withFlag)
+	assert.FileExists(t, ociBlobPath(withFlag, foreignLayerDigest))
+}
+
+// Returns the on-disk path of the blob with digest d in the oci: layout at dir.
+func ociBlobPath(dir string, d digest.Digest) string {
+	return filepath.Join(dir, "blobs", d.Algorithm().String(), d.Encoded())
+}
+
 func (s *copySuite) TestCopySimpleAtomicRegistry() {
 	t := s.T()
 	dir1 := t.TempDir()
