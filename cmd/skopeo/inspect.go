@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/docker/distribution/registry/api/errcode"
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"go.podman.io/common/pkg/report"
 	"go.podman.io/common/pkg/retry"
@@ -54,7 +54,8 @@ See skopeo(1) section "IMAGE NAMES" for the expected format
 		RunE: commandAction(opts.run),
 		Example: `skopeo inspect docker://registry.fedoraproject.org/fedora
 skopeo inspect --config docker://docker.io/alpine
-skopeo inspect --format "Name: {{.Name}} Digest: {{.Digest}}" docker://registry.access.redhat.com/ubi8`,
+skopeo inspect --format "Name: {{.Name}} Digest: {{.Digest}}" docker://registry.access.redhat.com/ubi8
+skopeo inspect --override-os linux --override-arch amd64 docker://docker.io/library/alpine`,
 		ValidArgsFunction: autocompleteImageNames,
 	}
 	adjustUsage(cmd)
@@ -80,7 +81,7 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 	defer cancel()
 
 	if len(args) != 1 {
-		return errors.New("Exactly one argument expected")
+		return errorShouldDisplayUsage{errors.New("exactly one argument expected")}
 	}
 	if opts.raw && opts.format != "" {
 		return errors.New("raw output does not support format option")
@@ -100,7 +101,7 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 		src, err = parseImageSource(ctx, opts.image, imageName)
 		return err
 	}, opts.retryOpts); err != nil {
-		return fmt.Errorf("Error parsing image name %q: %w", imageName, err)
+		return fmt.Errorf("parsing image name %q: %w", imageName, err)
 	}
 
 	defer func() {
@@ -114,13 +115,13 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 		rawManifest, _, err = unparsedInstance.Manifest(ctx)
 		return err
 	}, opts.retryOpts); err != nil {
-		return fmt.Errorf("Error retrieving manifest for image: %w", err)
+		return fmt.Errorf("retrieving manifest for image: %w", err)
 	}
 
 	if opts.raw && !opts.config {
 		_, err := stdout.Write(rawManifest)
 		if err != nil {
-			return fmt.Errorf("Error writing manifest to standard output: %w", err)
+			return fmt.Errorf("writing manifest to standard output: %w", err)
 		}
 
 		return nil
@@ -128,7 +129,7 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 
 	img, err := image.FromUnparsedImage(ctx, sys, unparsedInstance)
 	if err != nil {
-		return fmt.Errorf("Error parsing manifest for image: %w", err)
+		return fmt.Errorf("parsing manifest for image: %w", err)
 	}
 
 	if opts.config && opts.raw {
@@ -137,11 +138,11 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 			configBlob, err = img.ConfigBlob(ctx)
 			return err
 		}, opts.retryOpts); err != nil {
-			return fmt.Errorf("Error reading configuration blob: %w", err)
+			return fmt.Errorf("reading configuration blob: %w", err)
 		}
 		_, err = stdout.Write(configBlob)
 		if err != nil {
-			return fmt.Errorf("Error writing configuration blob to standard output: %w", err)
+			return fmt.Errorf("writing configuration blob to standard output: %w", err)
 		}
 		return nil
 	} else if opts.config {
@@ -150,10 +151,10 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 			config, err = img.OCIConfig(ctx)
 			return err
 		}, opts.retryOpts); err != nil {
-			return fmt.Errorf("Error reading OCI-formatted configuration data: %w", err)
+			return fmt.Errorf("reading OCI-formatted configuration data: %w", err)
 		}
 		if err := opts.writeOutput(stdout, config); err != nil {
-			return fmt.Errorf("Error writing OCI-formatted configuration data to standard output: %w", err)
+			return fmt.Errorf("writing OCI-formatted configuration data to standard output: %w", err)
 		}
 		return nil
 	}
@@ -181,7 +182,7 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 	}
 	outputData.Digest, err = manifestDigestFromManifest(rawManifest, img, opts.manifestDigest)
 	if err != nil {
-		return fmt.Errorf("Error computing manifest digest: %w", err)
+		return fmt.Errorf("computing manifest digest: %w", err)
 	}
 	if dockerRef := img.Reference().DockerReference(); dockerRef != nil {
 		outputData.Name = dockerRef.Name()
@@ -207,15 +208,14 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 			//   This is actually "code":"NOT_FOUND", and the parser doesn’t preserve that.
 			//   So, also check the error text.
 			if ok := errors.As(err, &ec); ok && ec.ErrorCode() == errcode.ErrorCodeUnknown {
-				var e errcode.Error
-				if ok := errors.As(err, &e); ok && e.Code == errcode.ErrorCodeUnknown && e.Message == "404 page not found" {
+				if e, ok := errors.AsType[errcode.Error](err); ok && e.Code == errcode.ErrorCodeUnknown && e.Message == "404 page not found" {
 					fatalFailure = false
 				}
 			}
 			if fatalFailure {
-				return fmt.Errorf("Error determining repository tags: %w", err)
+				return fmt.Errorf("determining repository tags: %w", err)
 			}
-			logrus.Warnf("Registry disallows tag list retrieval; skipping")
+			slog.Warn("Registry disallows tag list retrieval; skipping")
 		}
 	}
 	return opts.writeOutput(stdout, outputData)

@@ -52,6 +52,12 @@ For a detailed description how to install or build skopeo, see
 
 Skopeo is also available as a Container Image on [quay.io](https://quay.io/skopeo/stable).  For more information, see the [Skopeo Image](https://github.com/containers/image_build/blob/main/skopeo/README.md) page.
 
+Skopeo has no separate project website. This repository, and the container images
+documented above, are the only upstream builds; users can also use packages from
+distributions they trust, as documented in [install.md](./install.md). Other
+websites presenting themselves as the home of skopeo or offering their own skopeo
+downloads are not affiliated with the project.
+
 ## Inspecting a repository
 `skopeo` is able to _inspect_ a repository on a container registry and fetch images layers.
 The _inspect_ command fetches the repository's manifest and it is able to show you a `docker inspect`-like
