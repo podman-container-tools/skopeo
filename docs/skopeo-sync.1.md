@@ -88,6 +88,12 @@ Preserve the digests during copying. Fail if the digest cannot be preserved.
 
 This option does not change what will be copied; consider using `--all` at the same time.
 
+**--download-foreign-layers**
+
+Copy the contents of nondistributable ("foreign") layers, such as Windows base layers, to the destination. This overrides the normal behavior for destinations that support foreign-layer URL references. Other destinations copy the contents regardless of the flag.
+
+This flag does not change the foreign layer's media type or `urls` field. Other manifest conversions may still occur.
+
 **--remove-signatures** Do not copy signatures, if any, from _source-image_. This is necessary when copying a signed image to a destination which does not support signatures.
 
 **--remove-list-signatures**
