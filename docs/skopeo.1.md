@@ -21,7 +21,12 @@ skopeo -- Command line utility used to interact with local and remote container 
 `skopeo` can delete container images from a remote container registry.
 
 Note: `skopeo` does not require any container runtimes to be running to do most of
-its functionality.  It also does not require root, unless you are copying images into a container runtime storage backend, like the docker daemon or github.com/containers/storage.
+its functionality.  No skopeo subcommand structurally always requires root; whether
+elevated privileges are needed depends on the image transport and parameters.
+Accessing a root-owned **docker-daemon:** socket or the system-wide
+**containers-storage:** store typically requires root (or equivalent access), while
+operations against registries, **dir:**, **oci:**, and similar unprivileged locations
+generally work without root.
 
 ## IMAGE NAMES
 Most commands refer to container images, using a _transport_`:`_details_ format. The following formats are supported:
