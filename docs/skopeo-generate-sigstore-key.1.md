@@ -19,16 +19,16 @@ The public key is written to _prefix_**.pub** .
 
 See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
 
-**--help**, **-h**
+#### **--help**, **-h**
 
 Print usage statement
 
-**--output-prefix** _prefix_
+#### **--output-prefix** _prefix_
 
 Mandatory.
 Path prefix for the output keys (_prefix_**.private** and _prefix_**.pub**).
 
-**--passphrase-file** _path_
+#### **--passphrase-file** _path_
 
 The passphare to use to encrypt the private key.
 Only the first line will be read.

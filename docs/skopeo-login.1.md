@@ -17,47 +17,47 @@ flag.
 
 See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
 
-**--password**, **-p**=*password*
+#### **--password**, **-p**=*password*
 
 Password for registry
 
-**--password-stdin**
+#### **--password-stdin**
 
 Take the password from stdin
 
-**--username**, **-u**=*username*
+#### **--username**, **-u**=*username*
 
 Username for registry
 
-**--authfile**=*path*
+#### **--authfile**=*path*
 
 Path of the managed registry credentials file. On Linux, the default is ${XDG\_RUNTIME\_DIR}/containers/auth.json.
 See **containers-auth.json**(5) for more details about the default on other platforms.
 
 The default value of this option is read from the `REGISTRY\_AUTH\_FILE` environment variable.
 
-**--compat-auth-file**=*path*
+#### **--compat-auth-file**=*path*
 
 Instead of updating the default credentials file, update the one at *path*, and use a Docker-compatible format.
 
-**--get-login**
+#### **--get-login**
 
 Return the logged-in user for the registry. Return error if no login is found.
 
-**--cert-dir**=*path*
+#### **--cert-dir**=*path*
 
 Use certificates at *path* (\*.crt, \*.cert, \*.key) to connect to the registry.
 Default certificates directory is _/etc/containers/certs.d_.
 
-**--help**, **-h**
+#### **--help**, **-h**
 
 Print usage statement
 
-**--tls-verify**=_bool_
+#### **--tls-verify**=_bool_
 
 Require HTTPS and verify certificates when talking to the container registry or daemon. Default to registry.conf setting.
 
-**--verbose**, **-v**
+#### **--verbose**, **-v**
 
 Write more detailed information to stdout
 
