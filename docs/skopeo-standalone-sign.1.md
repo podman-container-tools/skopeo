@@ -19,15 +19,15 @@ This is primarily a debugging tool, useful for special cases, and usually should
 
 See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
 
-**--help**, **-h**
+#### **--help**, **-h**
 
 Print usage statement
 
-**--output**, **-o** _output file_
+#### **--output**, **-o** _output file_
 
 Write signature to _output file_.
 
-**--passphrase-file**=_path_
+#### **--passphrase-file**=_path_
 
 The passphare to use when signing with the key ID from `--sign-by`. Only the first line will be read. A passphrase stored in a file is of questionable security if other users can read this file. Do not use this option if at all avoidable.
 
