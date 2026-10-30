@@ -103,7 +103,7 @@ Login Succeeded!
 ```
 
 ## SEE ALSO
-skopeo(1), skopeo-logout(1), containers-auth.json(5), containers-registries.conf(5), containers-certs.d.5.md
+skopeo(1), skopeo-logout(1), containers-auth.json(5), containers-registries.conf(5), containers-certs.d(5)
 
 ## HISTORY
 May 2020, Originally compiled by Qi Wang <qiwan@redhat.com>
