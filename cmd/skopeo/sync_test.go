@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -89,7 +90,7 @@ images:
 			), &cfg)
 			require.NoError(t, err)
 
-			descs, err := imagesToCopyFromRegistry("example.com", cfg, *sourceCtx)
+			descs, err := imagesToCopyFromRegistry(context.Background(), "example.com", cfg, *sourceCtx)
 			require.NoError(t, err)
 			require.NotEmpty(t, descs)
 			ctx := descs[0].Context
