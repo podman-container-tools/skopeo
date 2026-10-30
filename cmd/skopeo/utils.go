@@ -19,6 +19,7 @@ import (
 	"go.podman.io/common/pkg/retry"
 	"go.podman.io/image/v5/copy"
 	"go.podman.io/image/v5/directory"
+	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/manifest"
 	ociarchive "go.podman.io/image/v5/oci/archive"
 	ocilayout "go.podman.io/image/v5/oci/layout"
@@ -81,7 +82,7 @@ func commandAction(handler func(args []string, stdout io.Writer) error) func(cmd
 // whether or not the value actually ends up being used.
 // DO NOT ADD ANY NEW USES OF THIS; just call dockerImageFlags with an appropriate, possibly empty, flagPrefix.
 type deprecatedTLSVerifyOption struct {
-	tlsVerify commonFlag.OptionalBool // FIXME FIXME: Warn if this is used, or even if it is ignored.
+	tlsVerify commonFlag.OptionalBool // FIXME: Warn if this is used, or even if it is ignored.
 }
 
 // warnIfUsed warns if tlsVerify was set by the user, and suggests alternatives (which should
@@ -217,8 +218,6 @@ func (opts *imageOptions) newSystemContext() (*types.SystemContext, error) {
 	}
 	if opts.tlsVerify.Present() {
 		ctx.DockerDaemonInsecureSkipTLSVerify = !opts.tlsVerify.Value()
-	}
-	if opts.tlsVerify.Present() {
 		ctx.DockerInsecureSkipTLSVerify = types.NewOptionalBool(!opts.tlsVerify.Value())
 	}
 	if opts.credsOption.Present() && opts.noCreds {
@@ -325,6 +324,12 @@ func (opts *imageDestOptions) warnAboutIneffectiveOptions(destTransport types.Im
 		if opts.dirForceDecompression {
 			slog.Warn(fmt.Sprintf("--%s can only be used if the destination transport is 'dir'", opts.imageDestFlagPrefix+"decompress"))
 		}
+	}
+	if destTransport.Name() != docker.Transport.Name() && opts.precomputeDigests {
+		slog.Warn(fmt.Sprintf("--%s can only be used if the destination transport is 'docker'", opts.imageDestFlagPrefix+"precompute-digests"))
+	}
+	if destTransport.Name() != ocilayout.Transport.Name() && opts.ociAcceptUncompressedLayers {
+		slog.Warn(fmt.Sprintf("--%s can only be used if the destination transport is 'oci'", opts.imageDestFlagPrefix+"oci-accept-uncompressed-layers"))
 	}
 }
 
