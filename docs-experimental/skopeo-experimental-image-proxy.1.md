@@ -25,7 +25,7 @@ The protocol requires a `socketpair(2)` of type `SOCK_SEQPACKET`, over which a s
     *   `error_code`: A string indicating the type of error if `success` is `false` (e.g., "EPIPE", "retryable", "other"). (Introduced in protocol version 0.2.8)
     *   `error`: A string describing the error if `success` is `false`.
 
-The current protocol version is `0.2.8`.
+The current protocol version is `0.2.9`.
 
 **Supported Protocol Methods**
 
@@ -33,7 +33,7 @@ The server supports the following methods:
 
 *   **Initialize**: Initializes the proxy. This method must be called before any other method.
     *   Args: `[]` (empty array)
-    *   Returns: `string` (the protocol version, e.g., "0.2.8")
+    *   Returns: `string` (the protocol version, e.g., "0.2.9")
 *   **OpenImage**: Opens an image reference (e.g., `docker://quay.io/example/image:latest`).
     *   Args: `[string imageName]`
     *   Returns: `uint64` (an opaque image ID to be used in subsequent calls)
@@ -58,6 +58,9 @@ The server supports the following methods:
 *   **GetLayerInfoPiped**: Retrieves information about image layers. This replaces `GetLayerInfo`.  Layer information data is streamed over a pipe, which makes it more reliable for images with many layers that would exceed message size limits with `GetLayerInfo`. The returned data is a JSON array of `{digest: string, size: int64, media_type: string}`. (Introduced in protocol version 0.2.7)
     *   Args: `[uint64 imageID]`
     *   Returns: `null`, layer information data via pipe.
+*   **OpenVarlinkSocket**: Serves the layers of an image over a varlink socket. The json-proxy does not interpret the protocol and only brokers the socket. (Introduced in protocol version 0.2.9)
+    *   Args: `[uint64 imageID]`, an image opened with `OpenImage`, which must be a `containers-storage:` image.
+    *   Returns: a socket file descriptor.
 *   **FinishPipe**: Signals that the client has finished reading all data from a pipe associated with a `pipeid` (obtained from methods like `GetManifest` or `GetBlob`). This allows the server to close its end of the pipe and report any pending errors (e.g., digest verification failure for `GetBlob`). This method **must** be called by the client after consuming data from a pipe, except for pipes from `GetRawBlob`.
     *   Args: `[uint32 pipeID]`
     *   Returns: `null`
@@ -80,7 +83,7 @@ When a method returns a `pipeid`, the server also passes the read-end of a pipe 
 
 **ProxyError**
 
-`GetBlobRaw` returns a JSON object of the following form in the error pipe where:
+`GetRawBlob` returns a JSON object of the following form in the error pipe where:
 ```
 {
     "code": "EPIPE" | "retryable" | "other",
@@ -153,10 +156,11 @@ as the reference Rust client.
 - 0.2.2: Added support for fetching image configuration as OCI
 - 0.2.3: Added GetFullConfig
 - 0.2.4: Added OpenImageOptional
-- 0.2.5: Added LayerInfoJSON
+- 0.2.5: Added GetLayerInfo
 - 0.2.6: Policy Verification before pulling OCI
 - 0.2.7: Added GetLayerInfoPiped
 - 0.2.8: Added GetRawBlob and error_code to replies
+- 0.2.9: Added OpenVarlinkSocket
 
 ## SEE ALSO
 skopeo(1), containers-auth.json(5)

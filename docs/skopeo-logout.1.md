@@ -37,6 +37,9 @@ Print usage statement
 **--tls-verify**=_bool_
 
 Require HTTPS and verify certificates when talking to the container registry or daemon. Default to registry.conf setting.
+When the credentials to remove are found in the credentials file, `skopeo logout` only edits the file and does not contact the registry.
+Otherwise, for example when the credentials were created with `docker login`, `skopeo logout` verifies the existing credentials against the registry, and this option applies to that connection.
+In that case nothing is removed; use `docker logout` instead.
 
 ## EXAMPLES
 
