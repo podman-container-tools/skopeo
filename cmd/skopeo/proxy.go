@@ -27,7 +27,7 @@ func proxyCmd(global *globalOptions) *cobra.Command {
 	imageFlags, imageOpts := imageFlags(global, sharedOpts, nil, "", "")
 	opts := proxyOptions{global: global, imageOpts: imageOpts}
 	cmd := &cobra.Command{
-		Use:   "experimental-image-proxy [command options] IMAGE",
+		Use:   "experimental-image-proxy [command options]",
 		Short: "Interactive proxy for fetching container images (EXPERIMENTAL)",
 		Long:  `Run skopeo as a proxy, supporting HTTP requests to fetch manifests and blobs.`,
 		RunE:  commandAction(opts.run),
