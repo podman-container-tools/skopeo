@@ -30,7 +30,7 @@ Path prefix for the output keys (_prefix_**.private** and _prefix_**.pub**).
 
 **--passphrase-file** _path_
 
-The passphare to use to encrypt the private key.
+The passphrase to use to encrypt the private key.
 Only the first line will be read.
 A passphrase stored in a file is of questionable security if other users can read this file.
 Do not use this option if at all avoidable.

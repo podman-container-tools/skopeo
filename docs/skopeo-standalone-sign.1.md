@@ -29,7 +29,7 @@ Write signature to _output file_.
 
 **--passphrase-file**=_path_
 
-The passphare to use when signing with the key ID from `--sign-by`. Only the first line will be read. A passphrase stored in a file is of questionable security if other users can read this file. Do not use this option if at all avoidable.
+The passphrase to use when signing with the key identified by the _key-fingerprint_ argument. Only the first line will be read. A passphrase stored in a file is of questionable security if other users can read this file. Do not use this option if at all avoidable.
 
 ## EXAMPLES
 

@@ -28,7 +28,7 @@ func standaloneSignCmd() *cobra.Command {
 	adjustUsage(cmd)
 	flags := cmd.Flags()
 	flags.StringVarP(&opts.output, "output", "o", "", "output the signature to `SIGNATURE`")
-	flags.StringVarP(&opts.passphraseFile, "passphrase-file", "", "", "file that contains a passphrase for the --sign-by key")
+	flags.StringVarP(&opts.passphraseFile, "passphrase-file", "", "", "file that contains a passphrase for the signing key")
 	return cmd
 }
 
