@@ -56,47 +56,47 @@ See [containers-transports(5)](https://github.com/containers/image/blob/main/doc
 These options should be placed before the subcommand name.
 Individual subcommands have their own options.
 
-**--command-timeout** _duration_
+#### **--command-timeout** _duration_
 
 Timeout for the command execution (e.g. 30s, 10m).
 
-**--debug**
+#### **--debug**
 
 enable debug output
 
-**--help**, **-h**
+#### **--help**, **-h**
 
 Show help
 
-**--insecure-policy**
+#### **--insecure-policy**
 
 Adopt an insecure, permissive policy that allows anything. This obviates the need for a policy file.
 
-**--override-arch** _arch_
+#### **--override-arch** _arch_
 
 Use _arch_ instead of the architecture of the machine for choosing images.
 
-**--override-os** _os_
+#### **--override-os** _os_
 
 Use _OS_ instead of the running OS for choosing images.
 
-**--override-variant** _variant_
+#### **--override-variant** _variant_
 
 Use _variant_ instead of the running architecture variant for choosing images.
 
-**--policy** _path-to-policy_
+#### **--policy** _path-to-policy_
 
 Path to a policy.json file to use for verifying signatures and deciding whether an image is trusted, overriding the default trust policy file.
 
-**--registries.d** _dir_
+#### **--registries.d** _dir_
 
 Use registry configuration files in _dir_ (e.g. for container signature storage), overriding the default path.
 
-**--require-signed**
+#### **--require-signed**
 
 Require that any pulled image must be signed regardless of what the default or provided trust policy file says.
 
-**--tls-details** _path_
+#### **--tls-details** _path_
 
 Path to a containers-tls-details(5) file, affecting TLS behavior throughout the program.
 
@@ -105,15 +105,15 @@ version of the program, version of the Go language, and the like).
 
 Users should generally not use this option unless they have a process to ensure that the configuration will be kept up to date.
 
-**--tmpdir** _dir_
+#### **--tmpdir** _dir_
 
 Directory used to store temporary files. Defaults to /var/tmp.
 
-**--user-agent-prefix** _prefix_
+#### **--user-agent-prefix** _prefix_
 
 Prefix to add to the user agent string. The resulting user agent will be in the format "_prefix_ skopeo/_version_".
 
-**--version**, **-v**
+#### **--version**, **-v**
 
 Print the version number
 
