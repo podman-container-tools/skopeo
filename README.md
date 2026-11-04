@@ -175,6 +175,13 @@ $ skopeo copy oci:busybox_ocilayout:latest dir:existingemptydirectory
 ```
 
 ## Deleting images
+
+Deletion must be allowed by the registry. For a self-hosted
+[distribution](https://github.com/distribution/distribution) registry, enable
+`storage.delete` (or `REGISTRY_STORAGE_DELETE_ENABLED=true`) on the **registry
+server**; see [skopeo-delete(1)](/docs/skopeo-delete.1.md). Without that, delete
+often fails with HTTP 405 / `UNSUPPORTED`.
+
 ```console
 $ skopeo delete docker://localhost:5000/imagename:latest
 ```
