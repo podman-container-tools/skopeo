@@ -204,13 +204,13 @@ Copy from docker daemon at _host_. If _host_ starts with `tcp://`, HTTPS is enab
 
 Copy to docker daemon at _host_. If _host_ starts with `tcp://`, HTTPS is enabled by default. To use plain HTTP, use the form `http://` (default is `unix:///var/run/docker.sock`).
 
-**--dest-compress-format** _format_
+**--dest-compress-format** _FORMAT_
 
 Specifies the compression format to use.  Supported values are: `gzip`, `zstd` and `zstd:chunked`.
 `zstd:chunked` is incompatible with encrypting images,
 and will be treated as `zstd` with a warning in that case.
 
-**--dest-compress-level** _format_
+**--dest-compress-level** _LEVEL_
 
 Specifies the compression level to use.  The value is specific to the compression algorithm used, e.g. for zstd the accepted values are in the range 1-20 (inclusive), while for gzip it is 1-9 (inclusive).
 
