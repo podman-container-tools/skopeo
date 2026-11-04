@@ -222,8 +222,8 @@ func getImageTags(ctx context.Context, sysCtx *types.SystemContext, repoRef refe
 // found in a source repository.
 // It returns an image reference slice with as many elements as the tags found
 // and any error encountered.
-func imagesToCopyFromRepo(sys *types.SystemContext, repoRef reference.Named) ([]types.ImageReference, error) {
-	tags, err := getImageTags(context.Background(), sys, repoRef)
+func imagesToCopyFromRepo(ctx context.Context, sys *types.SystemContext, repoRef reference.Named) ([]types.ImageReference, error) {
+	tags, err := getImageTags(ctx, sys, repoRef)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func imagesToCopyFromDir(dirPath string) ([]types.ImageReference, error) {
 // It returns a repository descriptors slice with as many elements as the images
 // found and any error encountered. Each element of the slice is a list of
 // image references, to be used as sync source.
-func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourceCtx types.SystemContext) ([]repoDescriptor, error) {
+func imagesToCopyFromRegistry(ctx context.Context, registryName string, cfg registrySyncConfig, sourceCtx types.SystemContext) ([]repoDescriptor, error) {
 	serverCtx := &sourceCtx
 	// override ctx with per-registryName options
 	serverCtx.DockerCertPath = cfg.CertDir
@@ -338,7 +338,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 			}
 		} else { // len(refs) == 0
 			repoLogger.Info("Querying registry for image tags")
-			sourceReferences, err = imagesToCopyFromRepo(serverCtx, repoRef)
+			sourceReferences, err = imagesToCopyFromRepo(ctx, serverCtx, repoRef)
 			if err != nil {
 				repoLogger.Error("Error processing repo, skipping", "err", err)
 				continue
@@ -361,7 +361,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 		if err != nil {
 			slog.Error(err.Error())
 		} else {
-			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
+			additionalRepoDescList := filterSourceReferences(ctx, serverCtx, registryName, filterCollection)
 			repoDescList = append(repoDescList, additionalRepoDescList...)
 		}
 	}
@@ -372,7 +372,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 		if err != nil {
 			slog.Error(err.Error())
 		} else {
-			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
+			additionalRepoDescList := filterSourceReferences(ctx, serverCtx, registryName, filterCollection)
 			repoDescList = append(repoDescList, additionalRepoDescList...)
 		}
 	}
@@ -390,7 +390,7 @@ type filterCollection map[string]filterFunc
 // filterSourceReferences lists tags for images specified in the collection and
 // filters them using assigned filter functions.
 // It returns a list of repoDescriptors.
-func filterSourceReferences(sys *types.SystemContext, registryName string, collection filterCollection) []repoDescriptor {
+func filterSourceReferences(ctx context.Context, sys *types.SystemContext, registryName string, collection filterCollection) []repoDescriptor {
 	var repoDescList []repoDescriptor
 	for repoName, filter := range collection {
 		logger := slog.With("repo", repoName, "registry", registryName)
@@ -406,7 +406,7 @@ func filterSourceReferences(sys *types.SystemContext, registryName string, colle
 		var sourceReferences []types.ImageReference
 
 		logger.Info("Querying registry for image tags")
-		sourceReferences, err = imagesToCopyFromRepo(sys, repoRef)
+		sourceReferences, err = imagesToCopyFromRepo(ctx, sys, repoRef)
 		if err != nil {
 			logger.Error("Error processing repo, skipping", "err", err)
 			continue
@@ -495,7 +495,7 @@ func semverFilterCollection(collection map[string]string) (filterCollection, err
 // It returns a slice of repository descriptors, where each descriptor is a
 // list of tagged image references to be used as sync source, and any error
 // encountered.
-func imagesToCopy(source string, transport string, sourceCtx *types.SystemContext) ([]repoDescriptor, error) {
+func imagesToCopy(ctx context.Context, source string, transport string, sourceCtx *types.SystemContext) ([]repoDescriptor, error) {
 	var descriptors []repoDescriptor
 
 	switch transport {
@@ -516,7 +516,7 @@ func imagesToCopy(source string, transport string, sourceCtx *types.SystemContex
 			}
 			desc.ImageRefs = []types.ImageReference{srcRef}
 		} else {
-			desc.ImageRefs, err = imagesToCopyFromRepo(sourceCtx, named)
+			desc.ImageRefs, err = imagesToCopyFromRepo(ctx, sourceCtx, named)
 			if err != nil {
 				return descriptors, err
 			}
@@ -551,7 +551,7 @@ func imagesToCopy(source string, transport string, sourceCtx *types.SystemContex
 			return descriptors, err
 		}
 		for registryName, registryConfig := range cfg {
-			descs, err := imagesToCopyFromRegistry(registryName, registryConfig, *sourceCtx)
+			descs, err := imagesToCopyFromRegistry(ctx, registryName, registryConfig, *sourceCtx)
 			if err != nil {
 				return descriptors, fmt.Errorf("retrieving list of images from registry %q: %w", registryName, err)
 			}
@@ -615,7 +615,7 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 	sourceArg := args[0]
 	var srcRepoList []repoDescriptor
 	if err = retry.IfNecessary(ctx, func() error {
-		srcRepoList, err = imagesToCopy(sourceArg, opts.source, sourceCtx)
+		srcRepoList, err = imagesToCopy(ctx, sourceArg, opts.source, sourceCtx)
 		return err
 	}, opts.retryOpts); err != nil {
 		return err
