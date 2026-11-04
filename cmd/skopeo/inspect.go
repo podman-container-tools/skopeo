@@ -213,7 +213,16 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 				}
 			}
 			if fatalFailure {
-				return fmt.Errorf("determining repository tags: %w", err)
+				// Tag listing does not use registries.conf remaps/mirrors (those apply to
+				// image pulls). In air-gapped setups the image inspect can succeed via a
+				// remapped registry while tag listing still contacts the original registry
+				// (e.g. registry-1.docker.io) and fails. Hint at --no-tags.
+				// https://github.com/podman-container-tools/skopeo/issues/2871
+				return fmt.Errorf("determining repository tags: %w\n"+
+					"Note: listing repository tags does not use registries.conf remaps or mirrors; "+
+					"it contacts the image's original registry. "+
+					"If the image data is available via a remapped/mirrored registry, "+
+					"retry with --no-tags to skip tag listing", err)
 			}
 			slog.Warn("Registry disallows tag list retrieval; skipping")
 		}
