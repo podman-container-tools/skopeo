@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.podman.io/image/v5/types"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 var _ yaml.Unmarshaler = (*tlsVerifyConfig)(nil)
@@ -30,19 +30,19 @@ func TestTLSVerifyConfig(t *testing.T) {
 			expected: tlsVerifyConfig{skip: types.OptionalBoolTrue},
 		},
 		{
-			input:    ``, // No value
+			input:    `not-a-tls-verify-field: ""`,
 			expected: tlsVerifyConfig{skip: types.OptionalBoolUndefined},
 		},
 	} {
 		config := container{}
-		err := yaml.Unmarshal([]byte(c.input), &config)
+		err := yaml.Load([]byte(c.input), &config)
 		require.NoError(t, err, c.input)
 		assert.Equal(t, c.expected, config.TLSVerify, c.input)
 	}
 
 	// Invalid input
 	config := container{}
-	err := yaml.Unmarshal([]byte(`tls-verify: "not a valid bool"`), &config)
+	err := yaml.Load([]byte(`tls-verify: "not a valid bool"`), &config)
 	assert.Error(t, err)
 }
 
@@ -80,7 +80,7 @@ func TestSyncTLSPrecedence(t *testing.T) {
 			sourceCtx, err := opts.newSystemContext()
 			require.NoError(t, err)
 			var cfg registrySyncConfig
-			err = yaml.Unmarshal(fmt.Appendf(nil, `
+			err = yaml.Load(fmt.Appendf(nil, `
 %s
 images:
   repo: # Specifying an explicit repo+tag avoids imagesToCopyFromRegistry trying to contact the registry.
