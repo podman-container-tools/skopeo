@@ -192,12 +192,13 @@ sub skopeo_help {
             }
         }
         elsif ($section eq 'flags') {
-            # Handle '--foo' or '-f, --foo'
-            if ($line =~ /^\s{1,10}(--\S+)\s/) {
+            # Handle '--foo' or '-f, --foo', or
+            # '--foo[=true|false]' or '-f, --foo[=true|false]'
+            if ($line =~ /^\s{1,10}(--[^\s\[]+)(?:\[=[^\]]*\])?\s/) {
                 print "> skopeo @_ $1\n"                        if $debug;
                 $help{$1} = 1;
             }
-            elsif ($line =~ /^\s{1,10}(-\S),\s+(--\S+)\s/) {
+            elsif ($line =~ /^\s{1,10}(-\S),\s+(--[^\s\[]+)(?:\[=[^\]]*\])?\s/) {
                 print "> skopeo @_ $1, $2\n"                    if $debug;
                 $help{$1} = $help{$2} = 1;
             }

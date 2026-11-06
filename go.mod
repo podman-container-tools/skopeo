@@ -15,7 +15,7 @@ require (
 	github.com/opencontainers/image-tools v1.0.0-rc3
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
 	go.podman.io/common v0.70.0
 	go.podman.io/image/v5 v5.42.0
