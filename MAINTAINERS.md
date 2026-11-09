@@ -12,9 +12,7 @@ Maintainers and Reviewers on other Podman Container Tools projects are found in 
 | Maintainer        | GitHub ID                                                | Project Roles | Affiliation                                  |
 | ----------------- | -------------------------------------------------------- | ------------- | -------------------------------------------- |
 | Tom Sweeney       | [TomSweeneyRedHat](https://github.com/TomSweeneyRedHat/) | Maintainer    | [Red Hat](https://github.com/RedHatOfficial) |
-| Dan Walsh         | [rhatdan](https://github.com/rhatdan)                    | Maintainer    | [Red Hat](https://github.com/RedHatOfficial) |
 | Ashley Cui        | [ashley-cui](https://github.com/ashley-cui)              | Reviewer      | [Red Hat](https://github.com/RedHatOfficial) |
-| Valentin Rothberg | [vrothberg](https://github.com/vrothberg)                | Reviewer      | [Red Hat](https://github.com/RedHatOfficial) |
 | Colin Walters     | [cgwalters](https://github.com/cgwalters)                | Reviewer      | [Red Hat](https://github.com/RedHatOfficial) |
 
 ## Alumni
@@ -22,6 +20,8 @@ Maintainers and Reviewers on other Podman Container Tools projects are found in 
 | Maintainer        | GitHub ID                                                | Project Roles | Affiliation                                  |
 | ----------------- | -------------------------------------------------------- | ------------- | -------------------------------------------- |
 | Lokesh Mandvekar  | [lsm5](https://github.com/lsm5)                          | Maintainer    | [Red Hat](https://github.com/RedHatOfficial) |
+| Dan Walsh         | [rhatdan](https://github.com/rhatdan)                    | Maintainer    | [Red Hat](https://github.com/RedHatOfficial) |
+| Valentin Rothberg | [vrothberg](https://github.com/vrothberg)                | Reviewer      | [Red Hat](https://github.com/RedHatOfficial) |
 
 ## Credits
 
