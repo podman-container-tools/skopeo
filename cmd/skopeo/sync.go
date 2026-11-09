@@ -25,7 +25,7 @@ import (
 	"go.podman.io/image/v5/manifest"
 	"go.podman.io/image/v5/transports"
 	"go.podman.io/image/v5/types"
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // syncOptions contains information retrieved from the skopeo sync command line.
@@ -144,7 +144,7 @@ func newSourceConfig(yamlFile string) (sourceConfig, error) {
 	if err != nil {
 		return cfg, err
 	}
-	err = yaml.Unmarshal(source, &cfg)
+	err = yaml.Load(source, &cfg)
 	if err != nil {
 		return cfg, fmt.Errorf("unmarshaling %q: %w", yamlFile, err)
 	}
