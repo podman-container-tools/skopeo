@@ -356,7 +356,7 @@ go.opentelemetry.io/otel/trace
 go.opentelemetry.io/otel/trace/embedded
 go.opentelemetry.io/otel/trace/internal/telemetry
 go.opentelemetry.io/otel/trace/noop
-# go.podman.io/common v0.67.2
+# go.podman.io/common v0.67.3
 ## explicit; go 1.25.0
 go.podman.io/common/pkg/auth
 go.podman.io/common/pkg/capabilities
@@ -366,7 +366,7 @@ go.podman.io/common/pkg/password
 go.podman.io/common/pkg/report
 go.podman.io/common/pkg/report/camelcase
 go.podman.io/common/pkg/retry
-# go.podman.io/image/v5 v5.39.3
+# go.podman.io/image/v5 v5.39.4
 ## explicit; go 1.25.0
 go.podman.io/image/v5/copy
 go.podman.io/image/v5/directory
@@ -438,7 +438,7 @@ go.podman.io/image/v5/transports
 go.podman.io/image/v5/transports/alltransports
 go.podman.io/image/v5/types
 go.podman.io/image/v5/version
-# go.podman.io/storage v1.62.1
+# go.podman.io/storage v1.62.3
 ## explicit; go 1.25.0
 go.podman.io/storage
 go.podman.io/storage/drivers
@@ -453,8 +453,11 @@ go.podman.io/storage/drivers/zfs
 go.podman.io/storage/internal/createpath
 go.podman.io/storage/internal/dedup
 go.podman.io/storage/internal/rawfilelock
+go.podman.io/storage/internal/rootlookupcache
 go.podman.io/storage/internal/staging_lockfile
+go.podman.io/storage/internal/stat
 go.podman.io/storage/internal/tempdir
+go.podman.io/storage/internal/xattrs
 go.podman.io/storage/pkg/archive
 go.podman.io/storage/pkg/chrootarchive
 go.podman.io/storage/pkg/chunked
