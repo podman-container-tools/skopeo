@@ -18,8 +18,8 @@ require (
 	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
 	go.podman.io/common v0.70.0
-	go.podman.io/image/v5 v5.42.0
-	go.podman.io/storage v1.65.0
+	go.podman.io/image/v5 v5.42.1
+	go.podman.io/storage v1.65.1
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/term v0.48.0
 )

@@ -435,7 +435,7 @@ go.podman.io/common/pkg/password
 go.podman.io/common/pkg/report
 go.podman.io/common/pkg/report/camelcase
 go.podman.io/common/pkg/retry
-# go.podman.io/image/v5 v5.42.0
+# go.podman.io/image/v5 v5.42.1
 ## explicit; go 1.26.0
 go.podman.io/image/v5/copy
 go.podman.io/image/v5/directory
@@ -510,7 +510,7 @@ go.podman.io/image/v5/transports
 go.podman.io/image/v5/transports/alltransports
 go.podman.io/image/v5/types
 go.podman.io/image/v5/version
-# go.podman.io/storage v1.65.0
+# go.podman.io/storage v1.65.1
 ## explicit; go 1.26.0
 go.podman.io/storage
 go.podman.io/storage/drivers
