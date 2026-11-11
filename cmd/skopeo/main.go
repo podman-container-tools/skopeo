@@ -98,9 +98,7 @@ func createApp() (*cobra.Command, *globalOptions) {
 	rootCommand.PersistentFlags().StringVar(&opts.overrideVariant, "override-variant", "", "use `VARIANT` instead of the running architecture variant for choosing images")
 	rootCommand.PersistentFlags().DurationVar(&opts.commandTimeout, "command-timeout", 0, "timeout for the command execution (e.g. 30s, 10m)")
 	rootCommand.PersistentFlags().StringVar(&opts.registriesConfPath, "registries-conf", "", "path to the registries.conf file")
-	if err := rootCommand.PersistentFlags().MarkHidden("registries-conf"); err != nil {
-		panic("unable to mark registries-conf flag as hidden")
-	}
+	rootCommand.PersistentFlags().Lookup("registries-conf").Hidden = true
 	rootCommand.PersistentFlags().StringVar(&opts.tmpDir, "tmpdir", "", "directory used to store temporary files")
 	rootCommand.PersistentFlags().StringVar(&opts.userAgentPrefix, "user-agent-prefix", "", "prefix to add to the user agent string")
 	flag := commonFlag.OptionalBoolFlag(rootCommand.Flags(), &opts.tlsVerify, "tls-verify", "Require HTTPS and verify certificates when accessing the registry")
@@ -128,7 +126,8 @@ func createApp() (*cobra.Command, *globalOptions) {
 func gitCommit() string {
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
-		panic("runtime.ReadBuildInfo failed")
+		// Not a fatal condition; we just won’t show a commit in --version.
+		return ""
 	}
 	for _, e := range bi.Settings {
 		if e.Key == "vcs.revision" {
