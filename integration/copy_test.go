@@ -994,7 +994,7 @@ func (s *copySuite) TestCopySequoiaSignatures() {
 // Compression during copy
 func (s *copySuite) TestCopyCompression() {
 	t := s.T()
-	const uncompresssedLayerFile = "160d823fdc48e62f97ba62df31e55424f8f5eb6b679c865eec6e59adfe304710"
+	const uncompressedLayerFile = "160d823fdc48e62f97ba62df31e55424f8f5eb6b679c865eec6e59adfe304710"
 
 	topDir := t.TempDir()
 
@@ -1012,13 +1012,13 @@ func (s *copySuite) TestCopyCompression() {
 		assertSkopeoSucceeds(t, "", "--tls-verify=false", "copy", c.remote, "dir:"+dir)
 
 		// The original directory contained an uncompressed file, the copy after pushing and pulling doesn't (we use a different name for the compressed file).
-		_, err = os.Lstat(filepath.Join("fixtures", c.fixture, uncompresssedLayerFile))
+		_, err = os.Lstat(filepath.Join("fixtures", c.fixture, uncompressedLayerFile))
 		require.NoError(t, err)
-		_, err = os.Lstat(filepath.Join(dir, uncompresssedLayerFile))
+		_, err = os.Lstat(filepath.Join(dir, uncompressedLayerFile))
 		require.Error(t, err)
 		assert.True(t, os.IsNotExist(err))
 
-		// All pulled layers are smaller than the uncompressed size of uncompresssedLayerFile. (Note that this includes the manifest in s2, but that works out OK).
+		// All pulled layers are smaller than the uncompressed size of uncompressedLayerFile. (Note that this includes the manifest in s2, but that works out OK).
 		dirf, err := os.Open(dir)
 		require.NoError(t, err)
 		fis, err := dirf.Readdir(-1)

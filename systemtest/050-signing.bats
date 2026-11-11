@@ -105,7 +105,7 @@ function kill_gpg_agent {
         return 1
     fi
     if [ "$status" -ne 0 ]; then
-        die "exit code is $status; expected $expected_rc"
+        die "exit code is $status; expected 0"
     fi
 
     # Cache local copy
