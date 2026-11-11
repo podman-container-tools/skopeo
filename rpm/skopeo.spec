@@ -14,13 +14,14 @@
 # Fedora conditionals
 %define build_with_btrfs 1
 %define conditional_epoch 1
-%if %{?fedora} >= 43
-%define sequoia 1
-%endif
 %else
 # RHEL conditionals
 %define conditional_epoch 2
 %define fips 1
+%endif
+
+%if 0%{?fedora} >= 43 || 0%{?rhel} >= 10
+%define sequoia 1
 %endif
 
 # set higher Epoch only for podman-next builds
