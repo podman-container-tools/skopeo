@@ -99,3 +99,38 @@ images:
 		})
 	}
 }
+
+func TestImagesToCopyFromRegistryInvalidFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "invalid tag regex",
+			yaml: `
+images-by-tag-regex:
+  repo: "["
+`,
+		},
+		{
+			name: "invalid semver constraint",
+			yaml: `
+images-by-semver:
+  repo: "not a semver constraint ("
+`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := fakeImageOptions(t, "src-", true, []string{}, []string{})
+			sourceCtx, err := opts.newSystemContext()
+			require.NoError(t, err)
+			var cfg registrySyncConfig
+			err = yaml.Unmarshal([]byte(tt.yaml), &cfg)
+			require.NoError(t, err)
+
+			// Nothing here queries the registry: the filters fail to compile before any request, and no tagless "images:" entries are configured.
+			_, err = imagesToCopyFromRegistry("example.com", cfg, *sourceCtx)
+			require.Error(t, err)
+		})
+	}
+}
