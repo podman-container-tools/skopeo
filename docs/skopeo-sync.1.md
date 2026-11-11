@@ -280,7 +280,7 @@ This will copy the following images:
 
 The full list of possible semantic version comparisons can be found in the
 upstream library's documentation:
-https://github.com/Masterminds/semver/tree/v3.2.0#basic-comparisons.
+https://github.com/Masterminds/semver/tree/v3.5.0#basic-comparisons.
 
 Version ordering and precedence is understood as defined here:
 https://semver.org/#spec-item-11.

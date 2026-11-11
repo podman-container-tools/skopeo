@@ -22,9 +22,9 @@
    Monitoring Dashboard:
    https://developer.mend.io/github/podman-container-tools
 
-   Note: The Renovate bot will create/manage it's business on
+   Note: The Renovate bot will create/manage its business on
          branches named 'renovate/*'.  Otherwise, and by
-         default, the only the copy of this file that matters
+         default, the only copy of this file that matters
          is the one on the `main` branch.  No other branches
          will be monitored or touched in any way.
 */
