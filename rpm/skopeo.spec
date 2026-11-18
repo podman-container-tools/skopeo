@@ -14,13 +14,13 @@
 # Fedora conditionals
 %define build_with_btrfs 1
 %define conditional_epoch 1
-%if %{?fedora} >= 43
-%define sequoia 1
-%endif
 %else
 # RHEL conditionals
 %define conditional_epoch 2
-%define fips 1
+%endif
+
+%if 0%{?fedora} >= 43 || 0%{?rhel} >= 10
+%define sequoia 1
 %endif
 
 # set higher Epoch only for podman-next builds
@@ -124,10 +124,6 @@ BASEBUILDTAGS="$(hack/libsubid_tag.sh) libsqlite3"
 export BUILDTAGS="$BASEBUILDTAGS $(hack/btrfs_installed_tag.sh)"
 %else
 export BUILDTAGS="$BASEBUILDTAGS exclude_graphdriver_btrfs"
-%endif
-
-%if %{defined fips}
-export BUILDTAGS="$BUILDTAGS libtrust_openssl"
 %endif
 
 %if %{defined sequoia}
