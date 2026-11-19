@@ -15,16 +15,35 @@ The effect of this is registry-specific; many registries don’t support this op
 
 **WARNING**: If _image-name_ contains a tag (but not a digest), in the current version of Skopeo this resolves the tag into a digest, and then deletes the manifest by digest, as described above (possibly deleting all tags pointing to that manifest, not just the provided tag). This behavior may change in the future.
 
+## Enabling deletion on a distribution registry
 
-When using the github.com/distribution/distribution registry server:
-To release the allocated disk space, you must login to the container registry server and execute the container registry garbage collector. E.g.,
+The `skopeo delete` command only asks the registry to delete a manifest. Whether that is allowed depends on the **registry server's** configuration, not Skopeo's. It is unrelated to `/etc/containers/storage.conf` or other Skopeo client configuration.
+
+When using the [distribution/distribution](https://github.com/distribution/distribution) registry (often run as the `registry` image or `docker-distribution` package), deletion is disabled by default. If it is disabled, `skopeo delete` typically fails with HTTP 405 and an `UNSUPPORTED` error.
+
+To enable deletion on the registry before using `skopeo delete`:
+
+- Set the registry process environment variable **REGISTRY_STORAGE_DELETE_ENABLED=true**, or
+- Set the equivalent in the registry config file:
+
+```
+storage:
+  delete:
+    enabled: true
+```
+
+The registry configuration file is commonly found on the registry server at `/etc/docker-distribution/registry/config.yml` or `/etc/docker/registry/config.yml`. Restart the registry after changing the setting.
+
+Other hosted registries, such as cloud vendor registries, have their own delete APIs and permissions; enabling `storage.delete` applies only to a self-hosted distribution registry you administer.
+
+Deleting a manifest marks content for removal but does not immediately free disk space. To reclaim space on a distribution registry server, run the registry garbage collector on the server, for example:
 
 ```
 /usr/bin/registry garbage-collect /etc/docker-distribution/registry/config.yml
 ```
-Note: sometimes the config.yml is stored in /etc/docker/registry/config.yml
 
-If you are running the container registry inside of a container you would execute something like:
+If the registry runs in a container:
+
 ```
 $ docker exec -it registry /usr/bin/registry garbage-collect /etc/docker-distribution/registry/config.yml
 ```
@@ -62,8 +81,6 @@ Print usage statement
 
 Access the registry anonymously.
 
-Additionally, the registry must allow deletions by setting `REGISTRY_STORAGE_DELETE_ENABLED=true` for the registry daemon.
-
 **--registry-token** _token_
 
 Bearer token for accessing the registry.
@@ -94,11 +111,11 @@ The password to access the registry.
 
 ## EXAMPLES
 
-Mark image example/pause for deletion from the registry.example.com registry:
+Mark the image `docker://registry.example.com/example/pause:latest` for deletion from the registry.example.com registry.
+The registry must allow deletions; see **Enabling deletion on a distribution registry** above for more details.
 ```console
 $ skopeo delete docker://registry.example.com/example/pause:latest
 ```
-See above for additional details on using the command **delete**.
 
 
 ## SEE ALSO
