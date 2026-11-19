@@ -2,7 +2,7 @@
 #
 # xref-helpmsgs-manpages - cross-reference --help options against man pages
 #
-package LibPod::CI::XrefHelpmsgsManpages;
+package Skopeo::CI::XrefHelpmsgsManpages;
 
 use v5.14;
 use utf8;
@@ -54,7 +54,6 @@ Exit status is zero if no inconsistencies found, one otherwise
 OPTIONS:
 
   -v, --verbose  show verbose progress indicators
-  -n, --dry-run  make no actual changes
 
   --help         display this message
   --version      display program name and version
