@@ -356,26 +356,20 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 	}
 
 	// include repository descriptors for cfg.ImagesByTagRegex
-	{
-		filterCollection, err := tagRegexFilterCollection(cfg.ImagesByTagRegex)
-		if err != nil {
-			slog.Error(err.Error())
-		} else {
-			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
-			repoDescList = append(repoDescList, additionalRepoDescList...)
-		}
+	filterCollection, err := tagRegexFilterCollection(cfg.ImagesByTagRegex)
+	if err != nil {
+		return nil, fmt.Errorf("building tag-regex filters for registry %q: %w", registryName, err)
 	}
+	additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
+	repoDescList = append(repoDescList, additionalRepoDescList...)
 
 	// include repository descriptors for cfg.ImagesBySemver
-	{
-		filterCollection, err := semverFilterCollection(cfg.ImagesBySemver)
-		if err != nil {
-			slog.Error(err.Error())
-		} else {
-			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
-			repoDescList = append(repoDescList, additionalRepoDescList...)
-		}
+	filterCollection, err = semverFilterCollection(cfg.ImagesBySemver)
+	if err != nil {
+		return nil, fmt.Errorf("building semver filters for registry %q: %w", registryName, err)
 	}
+	additionalRepoDescList = filterSourceReferences(serverCtx, registryName, filterCollection)
+	repoDescList = append(repoDescList, additionalRepoDescList...)
 
 	return repoDescList, nil
 }
