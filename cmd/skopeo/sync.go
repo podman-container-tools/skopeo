@@ -636,7 +636,7 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 	options.ImageListSelection = imageListSelection
 	options.OptimizeDestinationImageAlreadyExists = true
 
-	errorsPresent := false
+	var copyErrors []error
 	imagesNumber := 0
 	if opts.dryRun {
 		slog.Warn("Running in dry-run mode")
@@ -696,7 +696,7 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 					}
 					// log the error, keep a note that there was a failure and move on to the next
 					// image ref
-					errorsPresent = true
+					copyErrors = append(copyErrors, err)
 					slog.Error("Error copying", "ref", transports.ImageName(ref), "err", err)
 					continue
 				}
@@ -722,8 +722,14 @@ func (opts *syncOptions) run(args []string, stdout io.Writer) (retErr error) {
 	} else {
 		slog.Info(fmt.Sprintf("Synced %d images from %d sources", imagesNumber, len(srcRepoList)))
 	}
-	if !errorsPresent {
+	if len(copyErrors) == 0 {
 		return nil
 	}
-	return errors.New("sync failed due to previous reported error(s) for one or more images")
+	// Return the individual errors joined so that a sync where every failure was a missing image still classifies as "not found" (exit code 2).
+	if slices.ContainsFunc(copyErrors, func(err error) bool {
+		return !isNotFoundImageError(err)
+	}) {
+		return fmt.Errorf("sync failed due to previous reported error(s) for one or more images: %s", errors.Join(copyErrors...))
+	}
+	return errors.Join(copyErrors...)
 }
