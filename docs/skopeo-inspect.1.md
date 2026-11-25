@@ -15,6 +15,8 @@ The default output includes data from various sources: user input (**Name**), th
 and a per-architecture/OS image matching the current run-time environment (most other values).
 To see values for a different architecture/OS, use the **--override-os** / **--override-arch** options documented in [skopeo(1)](skopeo.1.md).
 
+**Note:** When listing the tags of an image, `inspect` does not use registries.conf remaps or mirrors; those apply to image pulls. In air-gapped setups where image data is available only via a remapped or mirrored registry, use the **--no-tags** option to ensure that `inspect` does not attempt to contact the original registry for the tag list.
+
 ## OPTIONS
 
 See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
