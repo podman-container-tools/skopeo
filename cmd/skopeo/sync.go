@@ -232,8 +232,7 @@ func imagesToCopyFromRepo(sys *types.SystemContext, repoRef reference.Named) ([]
 	for _, tag := range tags {
 		taggedRef, err := reference.WithTag(repoRef, tag)
 		if err != nil {
-			slog.Error("Error creating a tagged reference from registry tag list", "err", err, "repo", repoRef.Name(), "tag", tag)
-			continue
+			return nil, fmt.Errorf("creating a reference for repository %q and tag %q: %w", repoRef.Name(), tag, err)
 		}
 		ref, err := docker.NewReference(taggedRef)
 		if err != nil {
@@ -302,8 +301,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 		repoLogger := slog.With("repo", imageName, "registry", registryName)
 		repoRef, err := parseRepositoryReference(fmt.Sprintf("%s/%s", registryName, imageName))
 		if err != nil {
-			repoLogger.Error("Error parsing repository name, skipping", "err", err)
-			continue
+			return nil, fmt.Errorf("parsing repository name %q: %w", imageName, err)
 		}
 
 		repoLogger.Info("Processing repo")
@@ -317,22 +315,19 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 				if d, err := digest.Parse(ref); err == nil {
 					named, err = reference.WithDigest(repoRef, d)
 					if err != nil {
-						tagLogger.Error("Error processing ref, skipping", "err", err)
-						continue
+						return nil, fmt.Errorf("processing repository %q reference %q: %w", imageName, ref, err)
 					}
 				} else {
 					tagLogger.Debug("Ref was not a digest, trying as a tag", "err", err)
 					named, err = reference.WithTag(repoRef, ref)
 					if err != nil {
-						tagLogger.Error("Error parsing ref, skipping", "err", err)
-						continue
+						return nil, fmt.Errorf("parsing repository %q reference %q: %w", imageName, ref, err)
 					}
 				}
 
 				imageRef, err := docker.NewReference(named)
 				if err != nil {
-					tagLogger.Error("Error processing ref, skipping", "err", err)
-					continue
+					return nil, fmt.Errorf("processing repository %q reference %q: %w", imageName, ref, err)
 				}
 				sourceReferences = append(sourceReferences, imageRef)
 			}
@@ -340,8 +335,7 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 			repoLogger.Info("Querying registry for image tags")
 			sourceReferences, err = imagesToCopyFromRepo(serverCtx, repoRef)
 			if err != nil {
-				repoLogger.Error("Error processing repo, skipping", "err", err)
-				continue
+				return nil, fmt.Errorf("processing repository %q: %w", imageName, err)
 			}
 		}
 
@@ -359,22 +353,26 @@ func imagesToCopyFromRegistry(registryName string, cfg registrySyncConfig, sourc
 	{
 		filterCollection, err := tagRegexFilterCollection(cfg.ImagesByTagRegex)
 		if err != nil {
-			slog.Error(err.Error())
-		} else {
-			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
-			repoDescList = append(repoDescList, additionalRepoDescList...)
+			return nil, fmt.Errorf("parsing tag filters: %w", err)
 		}
+		additionalRepoDescList, err := filterSourceReferences(serverCtx, registryName, filterCollection)
+		if err != nil {
+			return nil, err
+		}
+		repoDescList = append(repoDescList, additionalRepoDescList...)
 	}
 
 	// include repository descriptors for cfg.ImagesBySemver
 	{
 		filterCollection, err := semverFilterCollection(cfg.ImagesBySemver)
 		if err != nil {
-			slog.Error(err.Error())
-		} else {
-			additionalRepoDescList := filterSourceReferences(serverCtx, registryName, filterCollection)
-			repoDescList = append(repoDescList, additionalRepoDescList...)
+			return nil, fmt.Errorf("parsing semver filters: %w", err)
 		}
+		additionalRepoDescList, err := filterSourceReferences(serverCtx, registryName, filterCollection)
+		if err != nil {
+			return nil, err
+		}
+		repoDescList = append(repoDescList, additionalRepoDescList...)
 	}
 
 	return repoDescList, nil
@@ -389,16 +387,15 @@ type filterCollection map[string]filterFunc
 
 // filterSourceReferences lists tags for images specified in the collection and
 // filters them using assigned filter functions.
-// It returns a list of repoDescriptors.
-func filterSourceReferences(sys *types.SystemContext, registryName string, collection filterCollection) []repoDescriptor {
+// It returns a list of repoDescriptors and any error encountered.
+func filterSourceReferences(sys *types.SystemContext, registryName string, collection filterCollection) ([]repoDescriptor, error) {
 	var repoDescList []repoDescriptor
 	for repoName, filter := range collection {
 		logger := slog.With("repo", repoName, "registry", registryName)
 
 		repoRef, err := parseRepositoryReference(fmt.Sprintf("%s/%s", registryName, repoName))
 		if err != nil {
-			logger.Error("Error parsing repository name, skipping", "err", err)
-			continue
+			return nil, fmt.Errorf("parsing repository name %q: %w", repoName, err)
 		}
 
 		logger.Info("Processing repo")
@@ -408,8 +405,7 @@ func filterSourceReferences(sys *types.SystemContext, registryName string, colle
 		logger.Info("Querying registry for image tags")
 		sourceReferences, err = imagesToCopyFromRepo(sys, repoRef)
 		if err != nil {
-			logger.Error("Error processing repo, skipping", "err", err)
-			continue
+			return nil, fmt.Errorf("processing repository %q: %w", repoName, err)
 		}
 
 		var filteredSourceReferences []types.ImageReference
@@ -429,7 +425,7 @@ func filterSourceReferences(sys *types.SystemContext, registryName string, colle
 			Context:   sys,
 		})
 	}
-	return repoDescList
+	return repoDescList, nil
 }
 
 // tagRegexFilterCollection converts a map of (repository name, tag regex) pairs

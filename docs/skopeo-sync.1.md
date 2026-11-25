@@ -28,6 +28,11 @@ Available _destination_ transports:
 When the `--scoped` option is specified, images are prefixed with the source image path so that multiple images with the same
 name can be stored at _destination_.
 
+Invalid repository names, image references or tag-selection filters in a YAML source cause synchronization to fail before copying images.
+Errors while listing repository tags also fail the command instead of silently skipping a repository.
+The `--keep-going` option applies to image copy failures, not source selection errors.
+An empty registry configuration or a valid filter matching no tags still produces a warning, not an error.
+
 ## OPTIONS
 
 See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
