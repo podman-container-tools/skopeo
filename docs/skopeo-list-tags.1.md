@@ -14,7 +14,7 @@ Return a list of tags from _source-image_ in a registry or a local docker-archiv
 
 See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
 
-**--authfile** _path_
+#### **--authfile** _path_
 
 Path of the updated registry credentials file. On Linux, the default is ${XDG\_RUNTIME\_DIR}/containers/auth.json.
 See **containers-auth.json**(5) for more details about the credential search mechanism and defaults on other platforms.
@@ -23,41 +23,43 @@ Use `skopeo login` to manage the credentials.
 
 The default value of this option is read from the `REGISTRY\_AUTH\_FILE` environment variable.
 
-**--creds** _username[:password]_ for accessing the registry.
+#### **--creds** _username[:password]_
 
-**--cert-dir** _path_
+Credentials for accessing the registry.
+
+#### **--cert-dir** _path_
 
 Use certificates at _path_ (\*.crt, \*.cert, \*.key) to connect to the registry.
 
-**--help**, **-h**
+#### **--help**, **-h**
 
 Print usage statement
 
-**--no-creds**
+#### **--no-creds**
 
 Access the registry anonymously.
 
-**--registry-token** _Bearer token_
+#### **--registry-token** _Bearer token_
 
 Bearer token for accessing the registry.
 
-**--retry-times**
+#### **--retry-times**
 
 The number of times to retry. By default, no retries are attempted.
 
-**--retry-delay**
+#### **--retry-delay**
 
 Fixed delay between retries. If not set (or set to 0s), retry wait time will be exponentially increased based on the number of failed attempts.
 
-**--tls-verify**=_bool_
+#### **--tls-verify**=_bool_
 
 Require HTTPS and verify certificates when talking to the container registry or daemon. Default to registry.conf setting.
 
-**--username**
+#### **--username**
 
 The username to access the registry.
 
-**--password**
+#### **--password**
 
 The password to access the registry.
 
