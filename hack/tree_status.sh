@@ -6,7 +6,7 @@ if [[ -z $STATUS ]]
 then
 	echo "tree is clean"
 else
-	echo "tree is dirty, please commit all changes and sync the vendor.conf"
+	echo "tree is dirty, please commit all changes"
 	echo ""
 	echo "$STATUS"
 	exit 1
