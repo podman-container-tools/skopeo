@@ -9,9 +9,14 @@
 
 `skopeo` is a command line utility that performs various operations on container images and image repositories.
 
-`skopeo` does not require the user to be running as root to do most of its operations.
-
 `skopeo` does not require a daemon to be running to perform its operations.
+
+No `skopeo` subcommand structurally always requires root. Whether elevated privileges
+are needed depends on the image transport and parameters in use. For example,
+accessing a root-owned `docker-daemon:` socket or the system-wide `containers-storage:`
+store typically requires root (or equivalent access), while operations against
+registries, `dir:`, `oci:`, and similar unprivileged locations generally work without
+root.
 
 `skopeo` can work with [OCI images](https://github.com/opencontainers/image-spec) as well as the original Docker v2 images.
 
